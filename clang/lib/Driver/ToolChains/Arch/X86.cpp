@@ -187,12 +187,30 @@ void x86::getX86TargetFeatures(const Driver &D, const llvm::Triple &Triple,
   if (Args.hasFlag(options::OPT_mlvi_hardening, options::OPT_mno_lvi_hardening,
                    false)) {
     Features.push_back("+lvi-load-hardening");
-    Features.push_back("+lvi-cfi"); // load hardening implies CFI protection
+    // Features.push_back("+lvi-cfi"); // load hardening implies CFI protection
     LVIOpt = options::OPT_mlvi_hardening;
-  } else if (Args.hasFlag(options::OPT_mlvi_cfi, options::OPT_mno_lvi_cfi,
-                          false)) {
+  }
+  if (Args.hasFlag(options::OPT_mlvi_cfi, options::OPT_mno_lvi_cfi, false)) {
     Features.push_back("+lvi-cfi");
     LVIOpt = options::OPT_mlvi_cfi;
+  }
+
+  if (Args.hasFlag(options::OPT_mspectre_cet_clearing, options::OPT_mno_spectre_cet_clearing,
+                   false)) {
+    Features.push_back("+spectre-cet-clearing");
+  }
+  if (Args.hasFlag(options::OPT_mspectre_cet_lfence, options::OPT_mno_spectre_cet_lfence,
+                   false)) {
+    Features.push_back("+spectre-cet-lfence");
+  }
+  if (Args.hasFlag(options::OPT_mspectre_cet_retpoline, options::OPT_mno_spectre_cet_retpoline,
+                   false)) {
+    Features.push_back("+spectre-cet-retpoline");
+  }
+  if (Args.hasFlag(options::OPT_mspectre_ret_retpoline, options::OPT_mno_spectre_ret_retpoline,
+                   false)) {
+    Features.push_back("+spectre-ret-retpoline");
+    // TODO: also push retpoline feature
   }
 
   if (Args.hasFlag(options::OPT_m_seses, options::OPT_mno_seses, false)) {

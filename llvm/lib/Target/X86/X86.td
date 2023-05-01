@@ -399,6 +399,34 @@ def FeatureLVILoadHardening
           "Insert LFENCE instructions to prevent data speculatively injected "
           "into loads from being used maliciously.">;
 
+// Mitigate Spectre BTB/RSB using CET and register clearing
+def FeatureSpectreCETClearing
+    : SubtargetFeature<
+          "spectre-cet-clearing", "UseSpectreCETClearing", "true",
+          "Use Intel CET shadow stacks and IBT and register clearing to "
+          "prevent spectre BTB and RSB attacks.">;
+
+// Mitigate Spectre BTB/RSB using CET and lfence
+def FeatureSpectreCETLfence
+    : SubtargetFeature<
+          "spectre-cet-lfence", "UseSpectreCETLfence", "true",
+          "Use Intel CET shadow stacks and IBT and lfence to "
+          "prevent spectre BTB and RSB attacks.">;
+
+// Mitigate Spectre BTB/RSB using shadow stacks and retpoline
+def FeatureSpectreCETRetpoline
+    : SubtargetFeature<
+          "spectre-cet-retpoline", "UseSpectreCETRetpoline", "true",
+          "Use Intel CET shadow stacks and retpoline to prevent "
+          "spectre BTB and RSB attacks.">;
+
+// Mitigate Spectre BTB/RSB using retpoline and return retpolines
+def FeatureSpectreCETRetRetpoline
+    : SubtargetFeature<
+          "spectre-ret-retpoline", "UseSpectreRetRetpoline", "true",
+          "Use retpoline and return retpoline to prevent spectre BTB and RSB attacks.">;
+
+
 def FeatureTaggedGlobals
     : SubtargetFeature<
           "tagged-globals", "AllowTaggedGlobals", "true",

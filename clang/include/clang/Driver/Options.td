@@ -3557,6 +3557,22 @@ def mlvi_cfi : Flag<["-"], "mlvi-cfi">, Group<m_Group>, Flags<[CoreOption,NoXarc
   HelpText<"Enable only control-flow mitigations for Load Value Injection (LVI)">;
 def mno_lvi_cfi : Flag<["-"], "mno-lvi-cfi">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
   HelpText<"Disable control-flow mitigations for Load Value Injection (LVI)">;
+def mspectre_cet_clearing : Flag<["-"], "mspectre-cet-clearing">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Enable Intel CET/register clearing based protections against spectre BTB and RSB attacks.">;
+def mno_spectre_cet_clearing : Flag<["-"], "mno-spectre-cet-clearing">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Disable Intel CET/clearing based protections against spectre BTB and RSB attacks.">;
+def mspectre_cet_lfence : Flag<["-"], "mspectre-cet-lfence">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Enable Intel CET/register lfence based protections against spectre BTB and RSB attacks.">;
+def mno_spectre_cet_lfence : Flag<["-"], "mno-spectre-cet-lfence">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Disable Intel CET/retpoline based protections against spectre BTB and RSB attacks.">;
+def mspectre_cet_retpoline : Flag<["-"], "mspectre-cet-retpoline">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Enable Intel CET/register retpoline based protections against spectre BTB and RSB attacks.">;
+def mno_spectre_cet_retpoline : Flag<["-"], "mno-spectre-cet-retpoline">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Disable Intel CET/retpoline based protections against spectre BTB and RSB attacks.">;
+def mspectre_ret_retpoline : Flag<["-"], "mspectre-ret_retpoline">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Enable indirect branch and return retpoline based protections against spectre BTB and RSB attacks.">;
+def mno_spectre_ret_retpoline : Flag<["-"], "mno-spectre-ret_retpoline">, Group<m_Group>, Flags<[CoreOption,NoXarchOption]>,
+  HelpText<"Disable indirect branch and return retpoline based protections against spectre BTB and RSB attacks.">;
 def m_seses : Flag<["-"], "mseses">, Group<m_Group>, Flags<[CoreOption, NoXarchOption]>,
   HelpText<"Enable speculative execution side effect suppression (SESES). "
     "Includes LVI control flow integrity mitigations">;
