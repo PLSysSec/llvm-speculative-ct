@@ -58,7 +58,7 @@ private:
   /// The function will not add it if already exists.
   /// It will add ENDBR32 or ENDBR64 opcode, depending on the target.
   /// \returns true if the ENDBR was added and false otherwise.
-  bool addENDBR(MachineBasicBlock &MBB, MachineBasicBlock::iterator I) const;
+  bool addENDBR(bool addLfence, MachineBasicBlock &MBB, MachineBasicBlock::iterator I) const;
 };
 
 } // end anonymous namespace
@@ -70,7 +70,7 @@ FunctionPass *llvm::createX86IndirectBranchTrackingPass() {
 }
 
 bool X86IndirectBranchTrackingPass::addENDBR(
-    MachineBasicBlock &MBB, MachineBasicBlock::iterator I) const {
+    bool addLfence, MachineBasicBlock &MBB, MachineBasicBlock::iterator I) const {
   assert(TII && "Target instruction info was not initialized");
   assert((X86::ENDBR64 == EndbrOpcode || X86::ENDBR32 == EndbrOpcode) &&
          "Unexpected Endbr opcode");
@@ -80,6 +80,10 @@ bool X86IndirectBranchTrackingPass::addENDBR(
   if (I == MBB.end() || I->getOpcode() != EndbrOpcode) {
     BuildMI(MBB, I, MBB.findDebugLoc(I), TII->get(EndbrOpcode));
     ++NumEndBranchAdded;
+
+    if (addLfence) {
+      BuildMI(MBB, I, MBB.findDebugLoc(I), TII->get(X86::LFENCE));
+    }
     return true;
   }
   return false;
@@ -115,6 +119,8 @@ static bool needsPrologueENDBR(MachineFunction &MF, const Module *M) {
 bool X86IndirectBranchTrackingPass::runOnMachineFunction(MachineFunction &MF) {
   const X86Subtarget &SubTarget = MF.getSubtarget<X86Subtarget>();
 
+  const bool cetLfence = MF.getContext().getSubtargetInfo()->hasFeature(X86::FeatureSpectreCETLfence);
+
   const Module *M = MF.getMMI().getModule();
   // Check that the cf-protection-branch is enabled.
   Metadata *isCFProtectionSupported = M->getModuleFlag("cf-protection-branch");
@@ -140,19 +146,19 @@ bool X86IndirectBranchTrackingPass::runOnMachineFunction(MachineFunction &MF) {
   // If function is reachable indirectly, mark the first BB with ENDBR.
   if (needsPrologueENDBR(MF, M)) {
     auto MBB = MF.begin();
-    Changed |= addENDBR(*MBB, MBB->begin());
+    Changed |= addENDBR(cetLfence, *MBB, MBB->begin());
   }
 
   for (auto &MBB : MF) {
     // Find all basic blocks that their address was taken (for example
     // in the case of indirect jump) and add ENDBR instruction.
     if (MBB.hasAddressTaken())
-      Changed |= addENDBR(MBB, MBB.begin());
+      Changed |= addENDBR(cetLfence, MBB, MBB.begin());
 
     for (MachineBasicBlock::iterator I = MBB.begin(); I != MBB.end(); ++I) {
       if (I->isCall() && I->getNumOperands() > 0 &&
           IsCallReturnTwice(I->getOperand(0))) {
-        Changed |= addENDBR(MBB, std::next(I));
+        Changed |= addENDBR(cetLfence, MBB, std::next(I));
       }
     }
 
@@ -165,7 +171,7 @@ bool X86IndirectBranchTrackingPass::runOnMachineFunction(MachineFunction &MF) {
         if (MBB.isEHPad()) {
           if (I->isDebugInstr())
             continue;
-          Changed |= addENDBR(MBB, I);
+          Changed |= addENDBR(cetLfence, MBB, I);
           break;
         } else if (I->isEHLabel()) {
           // Old Landingpad BB (is not Landingpad now) with
@@ -173,7 +179,7 @@ bool X86IndirectBranchTrackingPass::runOnMachineFunction(MachineFunction &MF) {
           MCSymbol *Sym = I->getOperand(0).getMCSymbol();
           if (!MF.hasCallSiteLandingPad(Sym))
             continue;
-          Changed |= addENDBR(MBB, std::next(I));
+          Changed |= addENDBR(cetLfence, MBB, std::next(I));
           break;
         }
       }
@@ -181,7 +187,7 @@ bool X86IndirectBranchTrackingPass::runOnMachineFunction(MachineFunction &MF) {
       for (MachineBasicBlock::iterator I = MBB.begin(); I != MBB.end(); ++I) {
         if (!I->isEHLabel())
           continue;
-        Changed |= addENDBR(MBB, std::next(I));
+        Changed |= addENDBR(cetLfence, MBB, std::next(I));
         break;
       }
     }
