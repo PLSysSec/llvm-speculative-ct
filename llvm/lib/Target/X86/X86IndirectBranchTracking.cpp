@@ -82,7 +82,9 @@ bool X86IndirectBranchTrackingPass::addENDBR(
     ++NumEndBranchAdded;
 
     if (addLfence) {
-      BuildMI(MBB, I, MBB.findDebugLoc(I), TII->get(X86::LFENCE));
+      if (I == MBB.end() || I->getOpcode() != X86::LFENCE) {
+        BuildMI(MBB, I, MBB.findDebugLoc(I), TII->get(X86::LFENCE));
+      }
     }
     return true;
   }
