@@ -47,6 +47,10 @@ static cl::opt<bool> LVIInlineAsmHardening(
     cl::desc("Harden inline assembly code that may be vulnerable to Load Value"
              " Injection (LVI). This feature is experimental."), cl::Hidden);
 
+static cl::opt<bool> AsmEndbranchInsertion(
+    "x86-experimental-asm-endbranch-insertion",
+    cl::desc("Add endbr to assembly code. This feature is experimental."), cl::Hidden);
+
 static bool checkScale(unsigned Scale, StringRef &ErrMsg) {
   if (Scale != 1 && Scale != 2 && Scale != 4 && Scale != 8) {
     ErrMsg = "scale factor in address must be 1, 2, 4 or 8";
@@ -86,6 +90,7 @@ class X86AsmParser : public MCTargetAsmParser {
   ParseInstructionInfo *InstInfo;
   bool Code16GCC;
   unsigned ForcedDataPrefix = 0;
+  bool postLabelPreEndbranch = false;
 
   enum VEXEncoding {
     VEXEncoding_Default,
@@ -1173,6 +1178,9 @@ private:
   void emitWarningForSpecialLVIInstruction(SMLoc Loc);
   void applyLVICFIMitigation(MCInst &Inst, MCStreamer &Out);
   void applyLVILoadHardeningMitigation(MCInst &Inst, MCStreamer &Out);
+  void applyInsertEndbranch(MCInst &Inst, MCStreamer &Out);
+
+  void onLabelParsed(MCSymbol *Symbol) override;
 
   /// Wrapper around MCStreamer::emitInstruction(). Possibly adds
   /// instrumentation around Inst.
@@ -3984,6 +3992,21 @@ void X86AsmParser::applyLVICFIMitigation(MCInst &Inst, MCStreamer &Out) {
   }
 }
 
+void X86AsmParser::applyInsertEndbranch(MCInst &Inst, MCStreamer &Out) {
+  unsigned int EndbrOpcode = is64BitMode() ? X86::ENDBR64 : X86::ENDBR32;
+  MCInst EndbrInst, FenceInst;
+  EndbrInst.setOpcode(EndbrOpcode);
+  Out.emitInstruction(EndbrInst, getSTI());
+
+  if (getSTI().hasFeature(X86::FeatureSpectreCETLfence) &&
+      Inst.getOpcode() != X86::LFENCE) {
+    FenceInst.setOpcode(X86::LFENCE);
+    Out.emitInstruction(FenceInst, getSTI());
+  }
+
+  postLabelPreEndbranch = false;
+}
+
 /// To mitigate LVI, every instruction that performs a load can be followed by
 /// an LFENCE instruction to squash any potential mis-speculation. There are
 /// some instructions that require additional considerations, and may requre
@@ -4033,11 +4056,20 @@ void X86AsmParser::applyLVILoadHardeningMitigation(MCInst &Inst,
   }
 }
 
+void X86AsmParser::onLabelParsed(MCSymbol *Symbol) {
+  if (AsmEndbranchInsertion)
+    postLabelPreEndbranch = true;
+}
+
 void X86AsmParser::emitInstruction(MCInst &Inst, OperandVector &Operands,
                                    MCStreamer &Out) {
   if (LVIInlineAsmHardening &&
       getSTI().getFeatureBits()[X86::FeatureLVIControlFlowIntegrity])
     applyLVICFIMitigation(Inst, Out);
+
+  if (AsmEndbranchInsertion &&
+      postLabelPreEndbranch)
+    applyInsertEndbranch(Inst, Out);
 
   Out.emitInstruction(Inst, getSTI());
 
