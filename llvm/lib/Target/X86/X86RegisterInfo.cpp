@@ -41,6 +41,10 @@ using namespace llvm;
 #define GET_REGINFO_TARGET_DESC
 #include "X86GenRegisterInfo.inc"
 
+#include "llvm/MC/MCContext.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Debug.h"
+
 static cl::opt<bool>
 EnableBasePointer("x86-use-base-pointer", cl::Hidden, cl::init(true),
           cl::desc("Enable use of a base pointer for complex stack frames"));
@@ -531,6 +535,11 @@ const uint32_t *X86RegisterInfo::getDarwinTLSCallPreservedMask() const {
 BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   const X86FrameLowering *TFI = getFrameLowering(MF);
+
+  // auto info = MF.getContext().getSubtargetInfo();
+  // DEBUG_WITH_TYPE("matt", dbgs() << "LVILoadHardening: " << info->hasFeature(X86::FeatureLVILoadHardening)
+  //                 << ", " << "LVIControlFlowIntegrity: " << info->hasFeature(X86::FeatureLVIControlFlowIntegrity)
+  //                 << "\n");
 
   // Set the floating point control register as reserved.
   Reserved.set(X86::FPCW);

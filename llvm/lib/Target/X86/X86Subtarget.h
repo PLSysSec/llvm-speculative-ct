@@ -229,10 +229,10 @@ public:
   // supported by the subtarget. Therefore useIndirectThunk*() will return true
   // if any respective thunk feature is enabled.
   bool useIndirectThunkCalls() const {
-    return useRetpolineIndirectCalls() || useLVIControlFlowIntegrity();
+    return useRetpolineIndirectCalls() || useLVIControlFlowIntegrity() || useSpectreCETRetpoline();
   }
   bool useIndirectThunkBranches() const {
-    return useRetpolineIndirectBranches() || useLVIControlFlowIntegrity();
+    return useRetpolineIndirectBranches() || useLVIControlFlowIntegrity() || useSpectreCETRetpoline();
   }
 
   unsigned getPreferVectorWidth() const { return PreferVectorWidth; }

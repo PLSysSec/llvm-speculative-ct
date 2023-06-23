@@ -58,6 +58,9 @@ static const char EDIRetpolineName[] = "__llvm_retpoline_edi";
 static const char LVIThunkNamePrefix[] = "__llvm_lvi_thunk_";
 static const char R11LVIThunkName[] = "__llvm_lvi_thunk_r11";
 
+static const char ShadowStackRetpolineNamePrefix[] = "__llvm_shadowstack_retpoline_";
+static const char ShadowStackR11RetpolineName[] = "__llvm_shadowstack_retpoline_r11";
+
 namespace {
 struct RetpolineThunkInserter : ThunkInserter<RetpolineThunkInserter> {
   const char *getThunkPrefix() { return RetpolineNamePrefix; }
@@ -104,6 +107,17 @@ struct LVIThunkInserter : ThunkInserter<LVIThunkInserter> {
   }
 };
 
+struct ShadowStackRetpolineThunkInserter : ThunkInserter<ShadowStackRetpolineThunkInserter> {
+  const char *getThunkPrefix() { return ShadowStackRetpolineNamePrefix; }
+  bool mayUseThunk(const MachineFunction &MF, bool InsertedThunks) {
+    if (InsertedThunks)
+      return false;
+    return MF.getSubtarget<X86Subtarget>().useSpectreCETRetpoline();
+  }
+  bool insertThunks(MachineModuleInfo &MMI, MachineFunction &MF);
+  void populateThunk(MachineFunction &MF);
+};
+
 class X86IndirectThunks : public MachineFunctionPass {
 public:
   static char ID;
@@ -116,7 +130,7 @@ public:
   bool runOnMachineFunction(MachineFunction &MF) override;
 
 private:
-  std::tuple<RetpolineThunkInserter, LVIThunkInserter> TIs;
+  std::tuple<ShadowStackRetpolineThunkInserter, RetpolineThunkInserter, LVIThunkInserter> TIs;
 
   // FIXME: When LLVM moves to C++17, these can become folds
   template <typename... ThunkInserterT>
@@ -257,6 +271,87 @@ void RetpolineThunkInserter::populateThunk(MachineFunction &MF) {
 
   CallTarget->back().setPreInstrSymbol(MF, TargetSym);
   BuildMI(CallTarget, DebugLoc(), TII->get(RetOpc));
+}
+
+bool ShadowStackRetpolineThunkInserter::insertThunks(MachineModuleInfo &MMI,
+                                                     MachineFunction &MF) {
+  // TODO: enforce this properly
+  assert(MMI.getTarget().getTargetTriple().getArch() == Triple::x86_64);
+
+  createThunkFunction(MMI, ShadowStackR11RetpolineName);
+  return true;
+}
+
+void ShadowStackRetpolineThunkInserter::populateThunk(MachineFunction &MF) {
+  // TODO: enforce this properly
+  assert(MF.getTarget().getTargetTriple().getArch() == Triple::x86_64);
+
+  // __llvm_shadowstack_retpoline_r11:
+  //   callq .Lr11_call_target
+  // .Lr11_capture_spec:
+  //   pause
+  //   lfence
+  //   jmp .Lr11_capture_spec
+  // .Lr11_call_target:
+  //   push    %rdi
+  //   rdsspq  %rdi
+  //   wrssq   %r11, (%rdi)
+  //   pop     %rdi
+  //   mov     %r11, (%rsp)
+  //   ret
+
+  const TargetInstrInfo *TII = MF.getSubtarget<X86Subtarget>().getInstrInfo();
+  assert (MF.size() == 1);
+  MachineBasicBlock *Entry = &MF.front();
+  Entry->clear();
+
+  MachineBasicBlock *CaptureSpec =
+      MF.CreateMachineBasicBlock(Entry->getBasicBlock());
+  MachineBasicBlock *CallTarget =
+      MF.CreateMachineBasicBlock(Entry->getBasicBlock());
+  MCSymbol *TargetSym = MF.getContext().createTempSymbol();
+  MF.push_back(CaptureSpec);
+  MF.push_back(CallTarget);
+
+  Entry->addLiveIn(X86::R11);
+  BuildMI(Entry, DebugLoc(), TII->get(X86::CALL64pcrel32)).addSym(TargetSym);
+
+  // The MIR verifier thinks that the CALL in the entry block will fall through
+  // to CaptureSpec, so mark it as the successor. Technically, CaptureTarget is
+  // the successor, but the MIR verifier doesn't know how to cope with that.
+  Entry->addSuccessor(CaptureSpec);
+
+  // In the capture loop for speculation, we want to stop the processor from
+  // speculating as fast as possible. On Intel processors, the PAUSE instruction
+  // will block speculation without consuming any execution resources. On AMD
+  // processors, the PAUSE instruction is (essentially) a nop, so we also use an
+  // LFENCE instruction which they have advised will stop speculation as well
+  // with minimal resource utilization. We still end the capture with a jump to
+  // form an infinite loop to fully guarantee that no matter what implementation
+  // of the x86 ISA, speculating this code path never escapes.
+  BuildMI(CaptureSpec, DebugLoc(), TII->get(X86::PAUSE));
+  BuildMI(CaptureSpec, DebugLoc(), TII->get(X86::LFENCE));
+  BuildMI(CaptureSpec, DebugLoc(), TII->get(X86::JMP_1)).addMBB(CaptureSpec);
+  CaptureSpec->setMachineBlockAddressTaken();
+  CaptureSpec->addSuccessor(CaptureSpec);
+
+  CallTarget->addLiveIn(X86::R11);
+  CallTarget->setMachineBlockAddressTaken();
+  CallTarget->setAlignment(Align(16));
+
+  BuildMI(CallTarget, DebugLoc(), TII->get(X86::PUSH64r)).addReg(X86::RDI);
+  CallTarget->back().setPreInstrSymbol(MF, TargetSym);
+  BuildMI(CallTarget, DebugLoc(), TII->get(X86::RDSSPQ), X86::RDI).addReg(X86::RDI);
+  addDirectMem(BuildMI(CallTarget, DebugLoc(), TII->get(X86::WRSSQ)), X86::RDI)
+    .addReg(X86::R11);
+  BuildMI(CallTarget, DebugLoc(), TII->get(X86::POP64r), X86::RDI);
+
+  // Insert return address clobber
+  addRegOffset(BuildMI(CallTarget, DebugLoc(), TII->get(X86::MOV64mr)), X86::RSP, false,
+               0)
+    .addReg(X86::R11);
+
+  BuildMI(CallTarget, DebugLoc(), TII->get(X86::RET64));
 }
 
 FunctionPass *llvm::createX86IndirectThunksPass() {

@@ -36402,6 +36402,11 @@ static const char *getIndirectThunkSymbol(const X86Subtarget &Subtarget,
     assert(Subtarget.is64Bit() && "Should not be using a 64-bit thunk!");
     return "__llvm_lvi_thunk_r11";
   }
+
+  if (Subtarget.useSpectreCETRetpoline()) {
+    return "__llvm_shadowstack_retpoline_r11";
+  }
+
   llvm_unreachable("getIndirectThunkSymbol() invoked without thunk feature");
 }
 
