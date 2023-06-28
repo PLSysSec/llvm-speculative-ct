@@ -1,0 +1,29 @@
+// Control Flow
+
+DEFINE_VISIT_FUNC( UnreachableInst )
+DEFINE_VISIT_FUNC( BranchInst )
+DEFINE_VISIT_FUNC( SwitchInst )
+DEFINE_VISIT_FUNC( ReturnInst )
+
+// Value Flow
+
+DEFINE_VISIT_FUNC( BinaryOperator )
+DEFINE_VISIT_FUNC( SelectInst )
+DEFINE_VISIT_FUNC( PHINode )
+DEFINE_VISIT_FUNC( CmpInst )
+
+// Pointer
+
+DEFINE_VISIT_FUNC( AllocaInst )
+DEFINE_VISIT_FUNC( StoreInst )
+DEFINE_VISIT_FUNC( LoadInst )
+
+// Cast
+
+DEFINE_VISIT_FUNC( GetElementPtrInst )
+DEFINE_VISIT_FUNC( CastInst )
+
+// Memory Intrinsics
+
+DEFINE_VISIT_FUNC( MemTransferInst )
+DEFINE_VISIT_FUNC( MemSetInst )

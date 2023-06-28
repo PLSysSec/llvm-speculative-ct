@@ -1,3 +1,4 @@
+#include "Utils.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/CallGraph.h"
@@ -36,48 +37,6 @@
 
 using namespace llvm;
 
-// def mrobustify_crypto_library_EQ : Joined<["-"], "mrobustify-crypto-library=">,
-//   Flags<[CoreOption, CC1Option]>, Group<m_Group>,
-//   HelpText<"Protect secrets in cryptographic libraries using Intel MPK.">;
-
-// static cl::opt<std::string> ApiFileName("robustify-api-file",
-//   cl::desc("Robust crypto api file name."),
-//   cl::value_desc("file name"), cl::init(""));
-
-
-static void splitConstExpr(Instruction *inst) {
-  size_t idx = 0;
-  if (auto phi = dyn_cast<PHINode>(inst)) {
-    for (auto &use: phi->incoming_values()) {
-      if (auto expr = dyn_cast<ConstantExpr>(use.get())) {
-        auto newinst = expr->getAsInstruction();
-        auto block = phi->getIncomingBlock(use);
-        newinst->insertBefore(block->getTerminator());
-        phi->setIncomingValue(idx, newinst);
-        splitConstExpr(newinst);
-      }
-      idx++;
-    }
-  } else {
-    for (auto &use: inst->operands()) {
-      if (auto expr = dyn_cast<ConstantExpr>(use.get())) {
-        auto newinst = expr->getAsInstruction();
-        newinst->insertBefore(inst);
-        inst->setOperand(idx, newinst);
-        splitConstExpr(newinst);
-      }
-      idx++;
-    }
-  }
-}
-
-void splitConstExpr(Module &M) {
-  // care: will this invalidate iterators?
-  for (Function &F: M)
-    for (BasicBlock &bbl: F)
-      for (Instruction &inst: bbl)
-        splitConstExpr(&inst);
-}
 
 void replaceLibRuntime(Module &m) {
     // replace malloc with mpk_malloc
@@ -181,8 +140,6 @@ public:
       DirFuncs[m.getFunction(apiInfo[0])] =  apiInfo;
     }
     ifile.close();
-
-    static std::error_code EC;
   }
 
   bool runOnModule(Module &m) {
@@ -197,11 +154,6 @@ public:
 
     return true;
   }
-
-  // void getAnalysisUsage(AnalysisUsage &AU) const override {
-  //   // AU.setPreservesAll(); // TODO(MATT): is this true?
-  //   AU.addRequired<LoopInfoWrapperPass>(); // TODO(MATT): ??
-  // }
 };
 
 // TODO(MATT): need to change references to separately compiled library
@@ -308,14 +260,14 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
       auto fn_arg = func.arg_begin();
       fn_arg += opInt;
       // auto target = fn_arg->getType();
-      auto stripped = fn_arg->stripPointerCasts();
+      // auto stripped = fn_arg->stripPointerCasts();
       auto mallocfunc = m.getFunction("mpk_malloc");
 
       // testing with static sizes
       // TODO: BASH deal with different cases
-      auto &dl = m.getDataLayout();
+      // auto &dl = m.getDataLayout();
       llvm::Value* argsize = nullptr;
-      auto mlen = builder.CreateAlloca(int64ty);
+      // auto mlen = builder.CreateAlloca(int64ty);
 
       // deal with Arg param for malloc len
       if (stoi(DirFuncs[&func][2]) == -1) {
@@ -324,7 +276,7 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
         /// argsize = builder.CreateMul(ConstantInt::get(int64ty, dl.getTypeAllocSize(basetype)), size);
         assert(false && "TODO(MATT): dynamic-sized arguments");
       } else {
-        argsize = builder.CreateMul(ConstantInt::get(int64ty, dl.getTypeAllocSize(Type::getInt8Ty(ctx))), ConstantInt::get(int64ty, stoi(DirFuncs[&func][2])));
+        argsize = ConstantInt::get(int64ty, stoi(DirFuncs[&func][2]));
       }
 
 
@@ -452,14 +404,9 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
   }
 }
 
-// RobustifyLibraryPass::RobustifyLibraryPass(std::optional<std::string> ApiFileName)
-//   : ApiFileName(ApiFileName) {}
-
 class RobustifyLibraryPass : public PassInfoMixin<RobustifyLibraryPass> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
-    DEBUG_WITH_TYPE("matt", dbgs() << "Hello" << "\n");
-
     std::string ApiFileName;
     const char *envVal = std::getenv("ROBUSTIFY_API_FILE");
     ApiFileName = envVal == nullptr ? "" : envVal;
