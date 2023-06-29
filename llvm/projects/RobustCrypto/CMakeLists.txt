@@ -5,6 +5,7 @@ set(LLVM_OPTIONAL_SOURCES
   AliasTaintCtx.h AliasTaintCtx.cpp
   BaseContext.h
   GlobalVisitor.h
+  ModObject.h
   ModifyVisitor.h
   TaintAnalysisVisitor.h TaintAnalysisVisitor.cpp
   VisitorCallback.h
@@ -22,6 +23,7 @@ add_llvm_pass_plugin(RobustifyAppPass RobustifyApp.cpp
   AliasTaintCtx.h AliasTaintCtx.cpp
   BaseContext.h
   GlobalVisitor.h
+  ModObject.h
   ModifyVisitor.h
   TaintAnalysisVisitor.h TaintAnalysisVisitor.cpp
   VisitorCallback.h

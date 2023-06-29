@@ -12,7 +12,7 @@
 
 struct Rules {
     static bool checkBlacklist(Function *func) {
-        if (Globals::SkipFuncs.count(func->getName()) != 0)
+      if (Globals::SkipFuncs.count(func->getName().str()) != 0)
             return true;
         else
             return false;
@@ -180,12 +180,12 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
             // assert(false);
         }
         else {
-            Value *calledValue = I.getCalledValue();
+            Value *calledValue = I.getCalledOperand();
             std::vector<Function*> targets;
             currCtx->getFuncPtrTargets(calledValue, targets);
             if (targets.size()) {
                 for (auto func: targets) {
-                    if (func->arg_size() == I.getNumArgOperands())
+                    if (func->arg_size() == I.arg_size())
                         this->processCalledFunction(I, func);
                 }
             } else {

@@ -42,125 +42,6 @@
 
 using namespace llvm;
 
-struct SAAPass: public ModulePass {
-    static char ID;
-
-    SAAPass(): ModulePass(ID) {}
-
-    ~SAAPass() {}
-
-    static void init(Module &m) {
-        splitConstExpr(m);
-        initValueUid(m, Globals::ValueUidMap);
-        DbgInfo::load(DbgBc);
-        Globals::ExportLabel = std::move(ExportLabel);
-        if (CreateLib != "") {
-            std::ifstream ifile(CreateLib);
-            std::string line;
-            std::string word;
-            std::string fn;
-            // std::istringstream sline;
-
-            while (std::getline(ifile, line)) {
-                // check if the declassification information is given
-                std::vector<std::string> apiInfo;
-                std::istringstream iss{line};
-                while(std::getline(iss, word, ' ')) {
-                    apiInfo.push_back(word);
-                }
-                // dbgs() << "Printing the vector\n" ;
-                // for (auto str: apiInfo) {
-                //     dbgs() << str << "\n";
-                // }
-                // dbgs() << "Done printing the vector\n";
-
-                Globals::DirFuncs[m.getFunction(apiInfo[0])] =  apiInfo;
-            }
-            ifile.close();
-            Globals::IsLib = true;
-
-            // static std::error_code EC;
-            // static raw_fd_ostream Output(ApisReportFile, EC, sys::fs::OF_Append);
-            // Globals::ApisReport = &Output;
-        }
-        // if (HotspotsFile != "") {
-        //     std::ifstream ifile(HotspotsFile);
-        //     std::string line;
-        //     while (std::getline(ifile, line)) {
-        //         Globals::Hotspots.insert(line);
-        //     }
-        //     ifile.close();
-        // }
-        if (SkipFile != "") {
-            std::ifstream ifile(SkipFile);
-            std::string line;
-            while (std::getline(ifile, line)) {
-                Globals::SkipFuncs.insert(line);
-            }
-            ifile.close();
-        }
-        static std::error_code EC;
-        static raw_fd_ostream Output(TaintReportFile, EC, sys::fs::OF_Append);
-        Globals::TaintReport = &Output;
-        if (Threshold != "")
-            Globals::Threshold = atof(Threshold.c_str());
-    }
-
-    bool runOnModule(Module &m) override {
-
-        init(m);
-
-        // Different logic for Library and the application client
-        if (Globals::IsLib) {
-
-            // Only library needs this
-            linkMemModule(m);           // maybe should throw error if it can't link
-            // Create a wrapper for the exported API functions
-            lib_fn_wrapper(m);
-            // Not planning to do any points-to and taint analysis here
-            // We are going to assume that all the memory operation here
-            // will happen in the Secure MPK domain. However we need to
-            // change the dynamic memory allocation calls to mpk based allocs.
-            replaceLibRuntime(m);
-        } else {
-            for (Function &func: m) {
-                if (func.getName().str() == CheckFunctionName) {
-                    errs() << "Entry Point Found!\n";
-                    // this will trigger both points-to and taint analysis
-                    start_analyze(m, func);
-                    break;
-                }
-            }
-            replaceRuntime(m);
-        }
-
-        // if (Globals::IsLib) {
-        //    Globals::ApisReport->close();
-        // }
-        Globals::TaintReport->close();
-        return true;
-    }
-
-    void getAnalysisUsage(AnalysisUsage &AU) const override {
-        AU.setPreservesAll();
-        AU.addRequired<LoopInfoWrapperPass>();
-    }
-
-    void start_analyze(Module &m, Function &entry) {
-        GlobalVisitor<AliasTaintContext> visitor(m, entry);
-        visitor.addCallback<AliasAnalysisVisitor>();
-        visitor.addCallback<TaintAnalysisVisitor>();
-        visitor.analyze();
-        visitor.clearCallbacks();
-        // DEBUG_PASSENTRY(dbgs() << "ModifyVisitor analyze\n");
-        auto modifyvisitor = visitor.addCallback<ModifyCallbackVisitor>();
-        visitor.analyze();
-        modifyvisitor->run_modify();
-    }
-};
-
-
-
 void replaceRuntime(Module &M) {
     auto &ctx = M.getContext();
     auto voidty = Type::getVoidTy(ctx);
@@ -213,7 +94,7 @@ public:
     Function* func = m.getFunction(EntryPointName);
     if (func) {
       // this will trigger both points-to and taint analysis
-      start_analyze(m, func);
+      start_analyze(m, *func);
     }
 
     replaceRuntime(m);
@@ -226,7 +107,7 @@ public:
     visitor.addCallback<TaintAnalysisVisitor>();
     visitor.analyze();
     visitor.clearCallbacks();
-    DEBUG_PASSENTRY(dbgs() << "ModifyVisitor analyze\n");
+    // DEBUG_PASSENTRY(dbgs() << "ModifyVisitor analyze\n");
     auto modifyvisitor = visitor.addCallback<ModifyCallbackVisitor>();
     visitor.analyze();
     modifyvisitor->run_modify();

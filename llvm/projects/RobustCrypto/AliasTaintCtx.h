@@ -9,6 +9,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/IR/Constants.h"
 #include "BaseContext.h"
+#include "ModObject.h"
 
 using namespace llvm;
 
@@ -260,6 +261,7 @@ struct AliasTaintContext: public BaseContext<AliasTaintContext> {
     static ObjectMap globalobjects;
     ObjectMap localobjects;
     std::set<Value*> retval;
+    FuncMod funcmod;
     bool isExportFn;
 
     // MemObj management
