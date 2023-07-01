@@ -117,7 +117,6 @@ struct ExpandFuncPtr {
 struct DbgInfo {
     static std::map<std::size_t, Value *> DbgUidValueMap;
     static Module *DbgM;
-    static Globals &ValueUidMap;
 
     static void load(std::string& dbgbc) {
         SMDiagnostic Err;
@@ -142,7 +141,7 @@ struct DbgInfo {
         }
     }
 
-    static int getSrcLine(Instruction *I) {
+    static int getSrcLine(Instruction *I, Globals &ValueUidMap) {
         auto DI =  dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
         const DebugLoc &currDC = DI->getDebugLoc();
         if (currDC) {
@@ -151,7 +150,7 @@ struct DbgInfo {
         return -1;
     }
 
-    static std::string getSrcFileName(Instruction *I) {
+    static std::string getSrcFileName(Instruction *I, Globals &ValueUidMap) {
         auto DI =  dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
         const DebugLoc &currDC = DI->getDebugLoc();
         if (currDC) {

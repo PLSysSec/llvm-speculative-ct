@@ -35,9 +35,9 @@ void ModifyCallbackVisitor::visitLoadInst(LoadInst &I) {
     auto srcreg = currCtx->findOpReg(src);
     if (checkPointsToTaint(srcreg, ignorestack)) {
         funcmod()->setTaint(inst);
-        int lineno = DbgInfo::getSrcLine(&I);
+        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
         if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I);
+            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
             // DEBUG_MODIFY(dbgs() << formatv("KeyTaint: {0},{1},{2}\n", filename, lineno,
             // *srcreg->represented));
         } else {
@@ -45,9 +45,9 @@ void ModifyCallbackVisitor::visitLoadInst(LoadInst &I) {
         }
     }
     if (checkPointsToSink(srcreg, ignorestack)) {
-        int lineno = DbgInfo::getSrcLine(&I);
+        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
         if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I);
+            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
             // DEBUG_MODIFY(dbgs() << formatv("Declassify: {0},{1},{2}\n", filename, lineno,
             // *srcreg->represented));
         } else {
@@ -67,9 +67,9 @@ void ModifyCallbackVisitor::visitStoreInst(StoreInst &I) {
     auto dstreg = currCtx->findOpReg(dst);
     if (checkPointsToTaint(dstreg, ignorestack)) {
         funcmod()->setTaint(inst);
-        int lineno = DbgInfo::getSrcLine(&I);
+        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
         if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I);
+            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
             // DEBUG_MODIFY(dbgs() << formatv("KeyTaint: {0},{1},{2}\n", filename, lineno,
             // *dstreg->represented));
         } else {
@@ -77,9 +77,9 @@ void ModifyCallbackVisitor::visitStoreInst(StoreInst &I) {
         }
     }
     if (checkPointsToSink(dstreg, ignorestack)) {
-        int lineno = DbgInfo::getSrcLine(&I);
+        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
         if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I);
+            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
             // DEBUG_MODIFY(dbgs() << formatv("Declassify: {0},{1},{2}\n", filename, lineno,
             // *dstreg->represented));
         } else {
@@ -455,9 +455,9 @@ struct FunctionModifyRunner {
         foreach_tainted_instmod([&](InstMod *instmod) {
             if (instmod->type == InstModType::MPKWrap || instmod->type == InstModType::MemFunc) {
                 // DEBUG_MODIFY(dbgs() << "Report " << *instmod->inst << "\n");
-                int lineno = DbgInfo::getSrcLine(instmod->inst);
+              int lineno = DbgInfo::getSrcLine(instmod->inst, *funcmod->ValueUidMap);
                 if (lineno >= 0) {
-                    std::string filename = DbgInfo::getSrcFileName(instmod->inst);
+                  std::string filename = DbgInfo::getSrcFileName(instmod->inst, *instmod->ValueUidMap);
                     // (*Globals::TaintReport) << formatv("{0},{1}\n", filename, lineno);
                 } else {
                     // DEBUG_MODIFY(dbgs() << "Cannot get lineno\n");

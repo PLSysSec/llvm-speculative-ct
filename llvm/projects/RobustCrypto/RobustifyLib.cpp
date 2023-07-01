@@ -37,6 +37,8 @@
 
 using namespace llvm;
 
+std::map<std::size_t, Value *> DbgInfo::DbgUidValueMap;
+Module *DbgInfo::DbgM = nullptr;
 
 void replaceLibRuntime(Module &m) {
     // replace malloc with mpk_malloc
