@@ -304,8 +304,8 @@ struct AliasTaintContext: public BaseContext<AliasTaintContext> {
 
     static void setupGlobals(Module &m);
 
-    AliasTaintContext(Instruction *inst, Function *func)
-        : BaseContext(inst, func), isExportFn(false) { }
+    AliasTaintContext(Instruction *inst, Function *func, Globals &globals)
+      : BaseContext(inst, func, globals), isExportFn(false), funcmod(FuncMod(&globals)) { }
 
     void getFuncPtrTargets(Value *fp, std::vector<Function*> &ret);
 };

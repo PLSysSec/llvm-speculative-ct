@@ -5,6 +5,7 @@
 #include <llvm/IR/Instructions.h>
 #include <utility>
 #include <vector>
+#include "Utils.h"
 
 using namespace llvm;
 
@@ -17,6 +18,7 @@ struct BaseContext {
     Function *func;
     bool inside_loop, lastloopiter;
     int loopidx;
+    Globals &globals;
 
     // context navigation
 
@@ -26,7 +28,7 @@ struct BaseContext {
                 return std::make_pair(ctxptr, false);
             }
         }
-        auto ret = new CtxClass(inst, func);
+        auto ret = new CtxClass(inst, func, globals);
         ret->parent = self;
         children.push_back(ret);
         return std::make_pair(ret, true);
@@ -43,8 +45,8 @@ struct BaseContext {
 
     // interfaces
 
-    BaseContext(Instruction *inst, Function *func)
-            : parent(nullptr), inst(inst), func(func), loopidx(0) {
+    BaseContext(Instruction *inst, Function *func, Globals &globals)
+      : parent(nullptr), inst(inst), func(func), loopidx(0), globals(globals) {
         self = static_cast<CtxClass*>(this);
     }
 

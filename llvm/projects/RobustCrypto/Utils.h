@@ -12,18 +12,7 @@
 
 using namespace llvm;
 
-struct Globals {
-    static std::map<Value *, std::size_t> ValueUidMap;
-    static std::map<Function *, std::vector<std::string>> DirFuncs;
-    static std::set<Function *> ClonedDirFuncs;
-    static std::string ExportLabel;
-    // static raw_fd_ostream *ApisReport;
-    static raw_fd_ostream *TaintReport;
-    static double Threshold;
-    static bool IsLib;
-    // static std::set<std::string> Hotspots;
-    static std::set<std::string> SkipFuncs;
-};
+typedef std::map<Value *, std::size_t> Globals;
 
 void initValueUid(Module &M, std::map<Value *, std::size_t> &valueUidMap);
 
@@ -128,6 +117,7 @@ struct ExpandFuncPtr {
 struct DbgInfo {
     static std::map<std::size_t, Value *> DbgUidValueMap;
     static Module *DbgM;
+    static Globals &ValueUidMap;
 
     static void load(std::string& dbgbc) {
         SMDiagnostic Err;
@@ -153,7 +143,7 @@ struct DbgInfo {
     }
 
     static int getSrcLine(Instruction *I) {
-        auto DI =  dyn_cast<Instruction>(DbgUidValueMap[Globals::ValueUidMap[I]]);
+        auto DI =  dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
         const DebugLoc &currDC = DI->getDebugLoc();
         if (currDC) {
             return currDC.getLine();
@@ -162,7 +152,7 @@ struct DbgInfo {
     }
 
     static std::string getSrcFileName(Instruction *I) {
-        auto DI =  dyn_cast<Instruction>(DbgUidValueMap[Globals::ValueUidMap[I]]);
+        auto DI =  dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
         const DebugLoc &currDC = DI->getDebugLoc();
         if (currDC) {
             auto *Scope = cast<DIScope>(currDC->getScope());

@@ -15,7 +15,9 @@ struct ModifiedFunction : public FuncMod {
   Function *newfunc;
   std::unique_ptr<ValueToValueMapTy> vmap;
 
-  ModifiedFunction() : isentry(false), callerprotect(false), newfunc(nullptr) {}
+  ModifiedFunction(Globals* ValueUidMap)
+    : FuncMod(ValueUidMap), isentry(false), callerprotect(false), newfunc(nullptr)
+  {}
 
   template <typename T> T *resolve_inst(T *val) {
     if (!vmap)
@@ -34,7 +36,7 @@ struct ModifiedFunctionList {
   std::vector<ModifiedFunction *> list;
 
   ModifiedFunction *tryinsert(AliasTaintContext *ctx) {
-    ModifiedFunction tmp;
+    ModifiedFunction tmp = ModifiedFunction(&(ctx->globals));
     tmp.origfunc = ctx->func;
     tmp.fn_map = std::move(ctx->funcmod.fn_map);
     tmp.returnlist = std::move(ctx->funcmod.returnlist);

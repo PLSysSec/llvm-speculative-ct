@@ -12,10 +12,6 @@
 
 struct Rules {
     static bool checkBlacklist(Function *func) {
-      if (Globals::SkipFuncs.count(func->getName().str()) != 0)
-            return true;
-        else
-            return false;
     }
 };
 
@@ -31,6 +27,7 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
     Module &mod;
     Function &entry;
     CtxClass *currCtx;
+    Globals &globals;
 
     private:
     typedef InstVisitor<GlobalVisitor<CtxClass> > BaseVisitor;
@@ -40,11 +37,11 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
 
 
     public:
-    GlobalVisitor(Module &mod, Function &entry)
-        : mod(mod), entry(entry), currCtx(nullptr) {
+    GlobalVisitor(Module &mod, Function &entry, Globals &globals)
+        : mod(mod), entry(entry), currCtx(nullptr), globals(globals) {
             super = static_cast<BaseVisitor*>(this);
             contexts.push_back(std::unique_ptr<CtxClass>(
-                        new CtxClass(nullptr, &entry) ));
+                        new CtxClass(nullptr, &entry, globals)));
         }
 
 
@@ -67,10 +64,6 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
 
     void analyze() {
         currCtx = contexts[0].get();
-        if (Globals::IsLib) {
-            currCtx->isExportFn = true;
-            dbgs() << "\n\nENTRY ANALYZE: This is an export function " << entry << "\n\n";
-        }
         analyze(entry);
     }
 

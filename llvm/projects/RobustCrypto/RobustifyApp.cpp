@@ -69,14 +69,29 @@ void replaceRuntime(Module &M) {
         reallocfunc->replaceAllUsesWith(mreallocfunc.getCallee());
 }
 
+void initValueUid(Module &M, std::map<Value *, std::size_t> &valueUidMap) {
+  std::size_t cnt = 0xdeadbeef00000000;
+  for (auto &F : M) {
+    valueUidMap[&F] = cnt;
+    // dbgs() << &F << "\n";
+    cnt++;
+    for (auto &BB : F) {
+      valueUidMap[&BB] = cnt;
+      // dbgs() << "  " << &BB << "\n";
+      cnt++;
+      for (auto &II : BB) {
+        valueUidMap[&II] = cnt;
+        // dbgs() << "    " << &II << " ";
+        cnt++;
+      }
+    }
+  }
+}
 
 class RobustifyApp {
 private:
-  std::map<Function *, std::vector<std::string>> DirFuncs;
-  std::set<Function *> ClonedDirFuncs;
-  std::set<std::string> SkipFuncs;
-  std::string ExportLabel;
   std::string EntryPointName;
+  Globals ValueUidMap;
 
   void lib_fn_wrapper(Module &m);
 
@@ -88,6 +103,7 @@ public:
 
   void init(Module &m) {
     splitConstExpr(m);
+    initValueUid(m, ValueUidMap);
   }
 
   bool runOnModule(Module &m) {
@@ -102,7 +118,7 @@ public:
   }
 
   void start_analyze(Module &m, Function &entry) {
-    GlobalVisitor<AliasTaintContext> visitor(m, entry);
+    GlobalVisitor<AliasTaintContext> visitor(m, entry, ValueUidMap);
     visitor.addCallback<AliasAnalysisVisitor>();
     visitor.addCallback<TaintAnalysisVisitor>();
     visitor.analyze();

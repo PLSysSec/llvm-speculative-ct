@@ -113,9 +113,6 @@ public:
 
   void init(Module &m) {
     splitConstExpr(m);
-    /// initValueUid(m, Globals::ValueUidMap);
-    /// DbgInfo::load(DbgBc);
-    /// ExportLabel = std::move(ExportLabel);
 
     std::ifstream ifile(ApiFileName);
     std::string line;
