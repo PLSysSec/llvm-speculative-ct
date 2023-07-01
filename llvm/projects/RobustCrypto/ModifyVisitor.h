@@ -80,6 +80,8 @@ struct ModifyCallbackVisitor : public VisitorCallback<AliasTaintContext> {
 
 private:
   FuncMod *funcmod() { return &(currCtx->funcmod); }
+
+  void visitLibFunction(CallInst &I, Function *func, InstMod *instmod);
 };
 
 #endif // MODIFYVISITOR_H

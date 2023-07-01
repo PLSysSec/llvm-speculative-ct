@@ -12,6 +12,7 @@ set(LLVM_OPTIONAL_SOURCES
   AliasTaintCtx.h
   CMakeLists.txt
   Instruction.def
+  ModifyVisitor.cpp
   ModifyVisitor.h
   RobustifyLib.cpp
   TaintAnalysisVisitor.h
@@ -36,6 +37,7 @@ add_llvm_pass_plugin(RobustifyAppPass RobustifyApp.cpp
   AliasTaintCtx.h
   CMakeLists.txt
   Instruction.def
+  ModifyVisitor.cpp
   ModifyVisitor.h
   TaintAnalysisVisitor.h
   Utils.h
