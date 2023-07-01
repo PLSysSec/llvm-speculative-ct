@@ -1,14 +1,21 @@
 set(LLVM_OPTIONAL_SOURCES
-  RobustifyLib.cpp
-  RobustifyApp.cpp
-  AliasAnalysisVisitor.h AliasAnalysisVisitor.cpp
-  AliasTaintCtx.h AliasTaintCtx.cpp
+  AliasAnalysisVisitor.cpp
+  AliasTaintCtx.cpp
   BaseContext.h
   GlobalVisitor.h
   ModObject.h
-  ModifyVisitor.h
-  TaintAnalysisVisitor.h TaintAnalysisVisitor.cpp
+  RobustifyApp.cpp
+  TaintAnalysisVisitor.cpp
+  Utils.cpp
   VisitorCallback.h
+  AliasAnalysisVisitor.h
+  AliasTaintCtx.h
+  CMakeLists.txt
+  Instruction.def
+  ModifyVisitor.h
+  RobustifyLib.cpp
+  TaintAnalysisVisitor.h
+  Utils.h
   )
 
 add_llvm_pass_plugin(RobustifyLibPass RobustifyLib.cpp
@@ -17,14 +24,19 @@ add_llvm_pass_plugin(RobustifyLibPass RobustifyLib.cpp
   )
 
 add_llvm_pass_plugin(RobustifyAppPass RobustifyApp.cpp
-  Utils.h
-  Utils.cpp
-  AliasAnalysisVisitor.h AliasAnalysisVisitor.cpp
-  AliasTaintCtx.h AliasTaintCtx.cpp
+  AliasAnalysisVisitor.cpp
+  AliasTaintCtx.cpp
   BaseContext.h
   GlobalVisitor.h
   ModObject.h
-  ModifyVisitor.h
-  TaintAnalysisVisitor.h TaintAnalysisVisitor.cpp
+  TaintAnalysisVisitor.cpp
+  Utils.cpp
   VisitorCallback.h
+  AliasAnalysisVisitor.h
+  AliasTaintCtx.h
+  CMakeLists.txt
+  Instruction.def
+  ModifyVisitor.h
+  TaintAnalysisVisitor.h
+  Utils.h
   )
