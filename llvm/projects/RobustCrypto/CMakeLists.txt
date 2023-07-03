@@ -41,4 +41,5 @@ add_llvm_pass_plugin(RobustifyAppPass RobustifyApp.cpp
   ModifyVisitor.h
   TaintAnalysisVisitor.h
   Utils.h
+  Utils.cpp
   )
