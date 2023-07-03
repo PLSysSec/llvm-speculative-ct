@@ -154,7 +154,7 @@ bool ModifyCallbackVisitor::visitCallInst(CallInst &I, Function *func) {
 }
 
 void ModifyCallbackVisitor::setupChildContext(CallInst &I, AliasTaintContext *child) {
-    Function *F = currCtx->func;
+    // Function *F = currCtx->func;
     // if (Globals::DirFuncs.size() && (Globals::DirFuncs.find(F) != Globals::DirFuncs.end()))
     //     currCtx->isExportFn = true;
 }
