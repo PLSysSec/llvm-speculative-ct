@@ -213,7 +213,7 @@ void InitializerWalker::scan(Constant* init, size_t off) {
 
 
 void InitializerWalker::handleNonAgg(Constant* init, size_t srcoff) {
-    assert(!isa<GlobalIndirectSymbol>(init));
+    // assert(!isa<GlobalIndirectSymbol>(init)); // TODO(MATT): what?
     if (isa<ConstantData>(init)) return;
     // simple case: globalobject
     auto stripped = init->stripPointerCasts();
