@@ -25,11 +25,11 @@ struct InstMod {
   InstModType type;
   bool tainted, ignorepriv;
   std::map<Function *, CallTarget> calltargets;
-  Globals *ValueUidMap;
+  Globals *globals;
 
-  InstMod(Globals *ValueUidMap)
+  InstMod(Globals *globals)
       : inst(nullptr), tainted(false), ignorepriv(false),
-        ValueUidMap(ValueUidMap) {}
+        globals(globals) {}
 
   InstMod(const InstMod &other) {
     inloop = other.inloop;
@@ -39,22 +39,22 @@ struct InstMod {
     tainted = other.tainted;
     ignorepriv = other.ignorepriv;
     calltargets = other.calltargets;
-    ValueUidMap = other.ValueUidMap;
+    globals = other.globals;
   }
 
   size_t calcHash() {
     size_t hash = 0;
-    hash_combine(hash, (*ValueUidMap)[inst]);
+    hash_combine(hash, (globals->ValueUidMap)[inst]);
     hash_combine(hash, type);
 
     std::map<size_t, CallTarget> tmpMap;
     for (auto &pair : calltargets) {
-      tmpMap[(*ValueUidMap)[pair.first]] = pair.second;
+      tmpMap[(globals->ValueUidMap)[pair.first]] = pair.second;
     }
 
     for (auto &pair : tmpMap) {
       auto &target = pair.second;
-      hash_combine(hash, (*ValueUidMap)[target.func]);
+      hash_combine(hash, (globals->ValueUidMap)[target.func]);
       hash_combine(hash, target.type);
       hash_combine(hash, target.hash);
     }
@@ -68,17 +68,17 @@ struct FuncMod {
   std::vector<ReturnInst *> returnlist;
   bool anytainted, isExportFn = false, calledbyExportFn = false;
   int cnt_total, cnt_tainted;
-  Globals *ValueUidMap;
+  Globals *globals;
 
-  FuncMod(Globals *ValueUidMap)
+  FuncMod(Globals *globals)
       : anytainted(false), cnt_total(0), cnt_tainted(0),
-        ValueUidMap(ValueUidMap) {}
+        globals(globals) {}
 
   size_t calcHash() {
     size_t hash = 0;
     std::map<size_t, InstMod> tmpMap;
     for (auto &pair : fn_map) {
-      tmpMap.insert_or_assign((*ValueUidMap)[pair.first], pair.second);
+      tmpMap.insert_or_assign((globals->ValueUidMap)[pair.first], pair.second);
     }
     for (auto &pair : tmpMap) {
       auto &instmod = pair.second;
@@ -93,7 +93,7 @@ struct FuncMod {
     auto inst = &I;
     auto it = fn_map.find(inst);
     if (it == fn_map.end()) {
-      auto &temp = fn_map.insert_or_assign(inst, InstMod(ValueUidMap)).first->second;
+      auto &temp = fn_map.insert_or_assign(inst, InstMod(globals)).first->second;
       temp.inst = inst;
       temp.type = type;
       temp.inloop = inloop;

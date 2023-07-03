@@ -10,11 +10,6 @@
 #include "BaseContext.h"
 #include "Utils.h"
 
-struct Rules {
-    static bool checkBlacklist(Function *func) {
-    }
-};
-
 
 template<typename CtxClass>
 class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
@@ -202,10 +197,10 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
             }
         }
 
-        if (Rules::checkBlacklist(currFunc)) {
+        // if (Rules::checkBlacklist(currFunc)) {
             // DEBUG_CALLINST(dbgs() << "Function in Black list: " << currFunc->getName() << "\n");
-            return;
-        }
+            // return;
+        // }
         if (currCtx->checkRecursive(I)) {
             // DEBUG_CALLINST(dbgs() << "Recursive found: " << I << "\n");
             return;

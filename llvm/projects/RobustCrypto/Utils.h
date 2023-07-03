@@ -10,9 +10,15 @@
 #include <vector>
 #include <map>
 
+// #define MEMMANAGER_OFF
+// #define WRPKRU_OFF
+// #define ONLY_MASTERKEY
+
 using namespace llvm;
 
-typedef std::map<Value *, std::size_t> Globals;
+struct Globals {
+  std::map<Value *, std::size_t> ValueUidMap;
+};
 
 void initValueUid(Module &M, std::map<Value *, std::size_t> &valueUidMap);
 
@@ -114,53 +120,47 @@ struct ExpandFuncPtr {
     PHINode* addPHINode();
 };
 
-struct DbgInfo {
-    static std::map<std::size_t, Value *> DbgUidValueMap;
-    static Module *DbgM;
+// void dbg_load(std::string& dbgbc, Globals &globals) {
+//     SMDiagnostic Err;
 
-    static void load(std::string& dbgbc) {
-        SMDiagnostic Err;
+//     LLVMContext *LLVMCtx = new LLVMContext();
+//     globals.DbgM = parseIRFile(dbgbc, Err, *LLVMCtx).release();
+//     std::size_t cnt = 0xdeadbeef00000000;
 
-        LLVMContext *LLVMCtx = new LLVMContext();
-        DbgM = parseIRFile(dbgbc, Err, *LLVMCtx).release();
-        std::size_t cnt = 0xdeadbeef00000000;
+//     splitConstExpr(*DbgM);
+//     for (auto &F : *DbgM) {
+//         DbgUidValueMap[cnt] = &F;
+//         cnt++;
+//         for (auto &BB : F) {
+//             DbgUidValueMap[cnt] = &BB;
+//             cnt++;
+//             for (auto &II : BB) {
+//                 if (isa<DbgInfoIntrinsic>(II)) continue;
+//                 DbgUidValueMap[cnt] = &II;
+//                 cnt++;
+//             }
+//         }
+//     }
+// }
 
-        splitConstExpr(*DbgM);
-        for (auto &F : *DbgM) {
-            DbgUidValueMap[cnt] = &F;
-            cnt++;
-            for (auto &BB : F) {
-                DbgUidValueMap[cnt] = &BB;
-                cnt++;
-                for (auto &II : BB) {
-                    if (isa<DbgInfoIntrinsic>(II)) continue;
-                    DbgUidValueMap[cnt] = &II;
-                    cnt++;
-                }
-            }
-        }
-    }
+// int dbg_getSrcLine(Instruction *I, Globals &ValueUidMap) {
+//   auto DI = dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
+//   const DebugLoc &currDC = DI->getDebugLoc();
+//   if (currDC) {
+//     return currDC.getLine();
+//   }
+//   return -1;
+// }
 
-    static int getSrcLine(Instruction *I, Globals &ValueUidMap) {
-        auto DI =  dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
-        const DebugLoc &currDC = DI->getDebugLoc();
-        if (currDC) {
-            return currDC.getLine();
-        }
-        return -1;
-    }
-
-    static std::string getSrcFileName(Instruction *I, Globals &ValueUidMap) {
-        auto DI =  dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
-        const DebugLoc &currDC = DI->getDebugLoc();
-        if (currDC) {
-            auto *Scope = cast<DIScope>(currDC->getScope());
-            return (Scope->getDirectory()+"/"+Scope->getFilename()).str();
-        }
-        return std::string("");
-    }
-
-};
+// std::string dbg_getSrcFileName(Instruction *I, Globals &ValueUidMap) {
+//   auto DI = dyn_cast<Instruction>(DbgUidValueMap[ValueUidMap[I]]);
+//   const DebugLoc &currDC = DI->getDebugLoc();
+//   if (currDC) {
+//     auto *Scope = cast<DIScope>(currDC->getScope());
+//     return (Scope->getDirectory() + "/" + Scope->getFilename()).str();
+//   }
+//   return std::string("");
+// }
 
 template <class T> inline void hash_combine(std::size_t &seed, const T &v) {
   std::hash<T> hasher;

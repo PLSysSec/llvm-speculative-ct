@@ -4,7 +4,7 @@
 #define LOOPFACTOR 10
 #define CALLFACTOR 30
 
-static bool ignorestack = false;
+#define IGNORESTACK false
 
 ModifiedFunctionList ModifyCallbackVisitor::newfunctions;
 std::set<Function *> ModifyCallbackVisitor::analyzed_functions;
@@ -33,29 +33,29 @@ void ModifyCallbackVisitor::visitLoadInst(LoadInst &I) {
 
     auto src = I.getPointerOperand();
     auto srcreg = currCtx->findOpReg(src);
-    if (checkPointsToTaint(srcreg, ignorestack)) {
+    if (checkPointsToTaint(srcreg, IGNORESTACK)) {
         funcmod()->setTaint(inst);
-        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
-        if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
-            // DEBUG_MODIFY(dbgs() << formatv("KeyTaint: {0},{1},{2}\n", filename, lineno,
-            // *srcreg->represented));
-        } else {
-            // DEBUG_MODIFY(dbgs() << "KeyTaint: Cannot get lineno\n");
-        }
+        // int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
+        // if (lineno >= 0) {
+        //     std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
+        //     DEBUG_MODIFY(dbgs() << formatv("KeyTaint: {0},{1},{2}\n", filename, lineno,
+        //     *srcreg->represented));
+        // } else {
+        //     DEBUG_MODIFY(dbgs() << "KeyTaint: Cannot get lineno\n");
+        // }
     }
-    if (checkPointsToSink(srcreg, ignorestack)) {
-        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
-        if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
-            // DEBUG_MODIFY(dbgs() << formatv("Declassify: {0},{1},{2}\n", filename, lineno,
-            // *srcreg->represented));
-        } else {
-            // DEBUG_MODIFY(dbgs() << "Declassify: Cannot get lineno\n");
-        }
+    if (checkPointsToSink(srcreg, IGNORESTACK)) {
+        // int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
+        // if (lineno >= 0) {
+        //     std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
+        //     DEBUG_MODIFY(dbgs() << formatv("Declassify: {0},{1},{2}\n", filename, lineno,
+        //     *srcreg->represented));
+        // } else {
+        //     DEBUG_MODIFY(dbgs() << "Declassify: Cannot get lineno\n");
+        // }
     }
     // sanity check
-    assert (!(checkPointsToTaint(srcreg, ignorestack) && checkPointsToSink(srcreg, ignorestack)));
+    assert (!(checkPointsToTaint(srcreg, IGNORESTACK) && checkPointsToSink(srcreg, IGNORESTACK)));
 }
 
 void ModifyCallbackVisitor::visitStoreInst(StoreInst &I) {
@@ -65,29 +65,29 @@ void ModifyCallbackVisitor::visitStoreInst(StoreInst &I) {
 
     auto dst = I.getPointerOperand();
     auto dstreg = currCtx->findOpReg(dst);
-    if (checkPointsToTaint(dstreg, ignorestack)) {
+    if (checkPointsToTaint(dstreg, IGNORESTACK)) {
         funcmod()->setTaint(inst);
-        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
-        if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
-            // DEBUG_MODIFY(dbgs() << formatv("KeyTaint: {0},{1},{2}\n", filename, lineno,
-            // *dstreg->represented));
-        } else {
-            // DEBUG_MODIFY(dbgs() << "KeyTaint: Cannot get lineno\n");
-        }
+        // int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
+        // if (lineno >= 0) {
+        //     std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
+        //     DEBUG_MODIFY(dbgs() << formatv("KeyTaint: {0},{1},{2}\n", filename, lineno,
+        //     *dstreg->represented));
+        // } else {
+        //     DEBUG_MODIFY(dbgs() << "KeyTaint: Cannot get lineno\n");
+        // }
     }
-    if (checkPointsToSink(dstreg, ignorestack)) {
-        int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
-        if (lineno >= 0) {
-            std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
-            // DEBUG_MODIFY(dbgs() << formatv("Declassify: {0},{1},{2}\n", filename, lineno,
-            // *dstreg->represented));
-        } else {
-            // DEBUG_MODIFY(dbgs() << "Declassify: Cannot get lineno\n");
-        }
+    if (checkPointsToSink(dstreg, IGNORESTACK)) {
+        // int lineno = DbgInfo::getSrcLine(&I, currCtx->globals);
+        // if (lineno >= 0) {
+        //     std::string filename = DbgInfo::getSrcFileName(&I, currCtx->globals);
+        //     DEBUG_MODIFY(dbgs() << formatv("Declassify: {0},{1},{2}\n", filename, lineno,
+        //     *dstreg->represented));
+        // } else {
+        //     DEBUG_MODIFY(dbgs() << "Declassify: Cannot get lineno\n");
+        // }
     }
     // sanity check
-    assert (!(checkPointsToTaint(dstreg, ignorestack) && checkPointsToSink(dstreg, ignorestack)));
+    assert (!(checkPointsToTaint(dstreg, IGNORESTACK) && checkPointsToSink(dstreg, IGNORESTACK)));
 }
 
 void ModifyCallbackVisitor::visitMemTransferInst(MemTransferInst &I) {
@@ -99,12 +99,12 @@ void ModifyCallbackVisitor::visitMemTransferInst(MemTransferInst &I) {
     auto dst = I.getOperand(0);
     auto srcreg = currCtx->findOpReg(src);
     auto dstreg = currCtx->findOpReg(dst);
-    if (checkPointsToTaint(srcreg, ignorestack) || checkPointsToTaint(dstreg, ignorestack)) {
+    if (checkPointsToTaint(srcreg, IGNORESTACK) || checkPointsToTaint(dstreg, IGNORESTACK)) {
         funcmod()->setTaint(inst);
     }
     // sanity check
-    assert (!(checkPointsToTaint(srcreg, ignorestack) && checkPointsToSink(srcreg, ignorestack)));
-    assert (!(checkPointsToTaint(dstreg, ignorestack) && checkPointsToSink(dstreg, ignorestack)));
+    assert (!(checkPointsToTaint(srcreg, IGNORESTACK) && checkPointsToSink(srcreg, IGNORESTACK)));
+    assert (!(checkPointsToTaint(dstreg, IGNORESTACK) && checkPointsToSink(dstreg, IGNORESTACK)));
 }
 
 void ModifyCallbackVisitor::visitMemSetInst(MemSetInst &I) {
@@ -114,21 +114,21 @@ void ModifyCallbackVisitor::visitMemSetInst(MemSetInst &I) {
 
     auto dst = I.getOperand(0);
     auto dstreg = currCtx->findOpReg(dst);
-    if (checkPointsToTaint(dstreg, ignorestack)) {
+    if (checkPointsToTaint(dstreg, IGNORESTACK)) {
         funcmod()->setTaint(inst);
     }
-    assert(!(checkPointsToTaint(dstreg, ignorestack) && checkPointsToSink(dstreg, ignorestack)));
+    assert(!(checkPointsToTaint(dstreg, IGNORESTACK) && checkPointsToSink(dstreg, IGNORESTACK)));
 }
 
 bool ModifyCallbackVisitor::visitCallInst(CallInst &I, Function *func) {
     if (currCtx->inside_loop) return false;
 
-    if (Rules::checkBlacklist(func)) {
-        auto inst =
-            funcmod()->getInstMod(I, InstModType::MPKWrap, currCtx->lastloopiter, currCtx->loopidx);
-        visitLibFunction(I, func, inst);
-        return false;
-    }
+    // if (Rules::checkBlacklist(func)) {
+    //     auto inst =
+    //         funcmod()->getInstMod(I, InstModType::MPKWrap, currCtx->lastloopiter, currCtx->loopidx);
+    //     visitLibFunction(I, func, inst);
+    //     return false;
+    // }
     if (currCtx->checkRecursive(I)) {
         auto inst =
             funcmod()->getInstMod(I, InstModType::MPKWrap, currCtx->lastloopiter, currCtx->loopidx);
@@ -192,7 +192,7 @@ void ModifyCallbackVisitor::visitLibFunction(CallInst &I, Function *func, InstMo
 
     for (auto &use : I.operands()) {
         auto reg = currCtx->findOpReg(use.get());
-        if (reg && checkPointsToTaint(reg, ignorestack)) {
+        if (reg && checkPointsToTaint(reg, IGNORESTACK)) {
             if (!instmod)
                 instmod = funcmod()->getInstMod(I, InstModType::MPKWrap, currCtx->lastloopiter,
                                                 currCtx->loopidx);
@@ -286,7 +286,7 @@ struct FunctionModifyRunner {
                 auto callinst = dyn_cast<CallInst>(newinst);
                 auto &target = instmod->calltargets.begin()->second;
                 auto &targetfuncmod =
-                  visitor->newfunctions.map.insert_or_assign(std::make_pair(target.func, target.hash), ModifiedFunction(instmod->ValueUidMap)).first->second;
+                  visitor->newfunctions.map.insert_or_assign(std::make_pair(target.func, target.hash), ModifiedFunction(instmod->globals)).first->second;
                 callinst->setCalledFunction(targetfuncmod.newfunc);
                 instmod->tainted = targetfuncmod.callerprotect;
             } else {
@@ -304,23 +304,23 @@ struct FunctionModifyRunner {
                 if (calledfunc->getName().equals("free") || calledfunc->getName().equals("realloc"))
                     return;
                 else if (calledfunc->getName().equals("malloc")) {
-// #ifndef MEMMANAGER_OFF
+#ifndef MEMMANAGER_OFF
                     auto functype = calledfunc->getFunctionType();
                     auto funcname = std::string("m_") + calledfunc->getName().str();
                     auto newfunc = visitor->mod.getOrInsertFunction(funcname, functype);
                     callinst->setCalledFunction(dyn_cast<Function>(newfunc.getCallee()));
-// #endif
+#endif
                 } else {
-// #ifndef MEMMANAGER_OFF
+#ifndef MEMMANAGER_OFF
                     auto functype = calledfunc->getFunctionType();
                     auto funcname = std::string("mpk_") + calledfunc->getName().str();
                     auto newfunc = visitor->mod.getOrInsertFunction(funcname, functype);
                     callinst->setCalledFunction(dyn_cast<Function>(newfunc.getCallee()));
-// #endif
+#endif
                 }
             } else if (instmod->type == InstModType::AllocaInst) {
-// #ifndef STACKMEMSET
-// #ifndef MEMMANAGER_OFF
+#ifndef STACKMEMSET
+#ifndef MEMMANAGER_OFF
                 auto newinst = funcmod->resolve_inst(instmod->inst);
                 auto allocainst = dyn_cast<AllocaInst>(newinst);
                 auto newmalloc = replaceAllocaWithMPKMalloc(visitor->mod, allocainst);
@@ -332,18 +332,18 @@ struct FunctionModifyRunner {
                     auto freemod = funcmod->getInstMod(*newfree, InstModType::MPKWrap, false);
                     funcmod->setTaint(freemod);
                 }
-// #endif
-// #else
-// #ifndef MEMMANAGER_OFF
-                // DEBUG_MODIFY(dbgs() << "testtest\n");
-                // auto newinst = funcmod->resolve_inst(instmod->inst);
-                // auto allocainst = dyn_cast<AllocaInst>(newinst);
-                // for (auto returninst : funcmod->returnlist) {
-                //     auto newreturn = funcmod->resolve_inst(returninst);
-                //     insertMemset(visitor->mod, allocainst, newreturn);
-                // }
-// #endif
-// #endif
+#endif
+#else
+#ifndef MEMMANAGER_OFF
+                DEBUG_MODIFY(dbgs() << "testtest\n");
+                auto newinst = funcmod->resolve_inst(instmod->inst);
+                auto allocainst = dyn_cast<AllocaInst>(newinst);
+                for (auto returninst : funcmod->returnlist) {
+                    auto newreturn = funcmod->resolve_inst(returninst);
+                    insertMemset(visitor->mod, allocainst, newreturn);
+                }
+#endif
+#endif
             }
         });
     }
@@ -360,7 +360,7 @@ struct FunctionModifyRunner {
             if (instmod->type == InstModType::FuncDirect) {
                 auto &target = instmod->calltargets.begin()->second;
                 auto &targetfuncmod =
-                    visitor->newfunctions.map.insert_or_assign(std::make_pair(target.func, target.hash), ModifiedFunction(instmod->ValueUidMap)).first->second;
+                    visitor->newfunctions.map.insert_or_assign(std::make_pair(target.func, target.hash), ModifiedFunction(instmod->globals)).first->second;
                 double child_score = (double)targetfuncmod.cnt_tainted / targetfuncmod.cnt_total;
                 score_pair.first = CALLFACTOR;
                 score_pair.second = CALLFACTOR * child_score;
@@ -454,14 +454,15 @@ struct FunctionModifyRunner {
     void reportTaint() {
         foreach_tainted_instmod([&](InstMod *instmod) {
             if (instmod->type == InstModType::MPKWrap || instmod->type == InstModType::MemFunc) {
-                // DEBUG_MODIFY(dbgs() << "Report " << *instmod->inst << "\n");
-              int lineno = DbgInfo::getSrcLine(instmod->inst, *funcmod->ValueUidMap);
-                if (lineno >= 0) {
-                  std::string filename = DbgInfo::getSrcFileName(instmod->inst, *instmod->ValueUidMap);
-                    // (*Globals::TaintReport) << formatv("{0},{1}\n", filename, lineno);
-                } else {
-                    // DEBUG_MODIFY(dbgs() << "Cannot get lineno\n");
-                }
+              // DEBUG_MODIFY(dbgs() << "Report " << *instmod->inst << "\n");
+              // int lineno = DbgInfo::getSrcLine(instmod->inst, *funcmod->globals);
+              // if (lineno >= 0) {
+              //   std::string filename =
+              //       DbgInfo::getSrcFileName(instmod->inst, *instmod->globals);
+              //   (*Globals::TaintReport) << formatv("{0},{1}\n", filename, lineno);
+              // } else {
+              //   DEBUG_MODIFY(dbgs() << "Cannot get lineno\n");
+              // }
             }
         });
     }

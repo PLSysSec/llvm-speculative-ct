@@ -15,8 +15,8 @@ struct ModifiedFunction : public FuncMod {
   Function *newfunc;
   std::unique_ptr<ValueToValueMapTy> vmap;
 
-  ModifiedFunction(Globals* ValueUidMap)
-    : FuncMod(ValueUidMap), isentry(false), callerprotect(false), newfunc(nullptr)
+  ModifiedFunction(Globals* globals)
+    : FuncMod(globals), isentry(false), callerprotect(false), newfunc(nullptr)
   {}
 
   template <typename T> T *resolve_inst(T *val) {
