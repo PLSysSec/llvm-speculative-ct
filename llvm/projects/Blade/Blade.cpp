@@ -49,12 +49,12 @@ bool BladeEdge::operator<(const BladeEdge& other) const {
 }
 
 bool BladeNode::operator==(const BladeNode& other) const {
-  return this->isEqual(other);
+  return isEqual(other);
 }
 
 bool BladeNode::operator<(const BladeNode& other) const {
   if (getKind() != other.getKind()) {
-    return false;
+    return getKind() < other.getKind();
   } else {
     return this->isLessThan(other);
   }
@@ -75,6 +75,14 @@ bool BladeNode::hasEdgeTo(const BladeNode &other) const {
     }
   }
   return false;
+}
+
+void BladeNode::outputEdges(raw_ostream& os) const {
+  for (BladeEdge edge : this->edges) {
+    if (edge.weight > 0) {
+      os << *this << " -> " << *(edge.target) << ";\n";
+    }
+  }
 }
 
 class DistinguishedNode : public BladeNode {
@@ -104,6 +112,10 @@ public:
       return false;
     }
   }
+
+  raw_ostream& outputNode(raw_ostream& os) const {
+    return os << id;
+  }
 };
 
 class ValueDefNode : public BladeNode {
@@ -132,6 +144,10 @@ public:
       return false;
     }
   }
+
+  raw_ostream& outputNode(raw_ostream& os) const {
+    return os << '"' << "defn: " << *inst << '"';
+  }
 };
 
 class InstSinkNode : public BladeNode {
@@ -146,7 +162,7 @@ public:
   }
 
   bool isEqual(const BladeNode& other) const {
-    if (auto* cast_other = dyn_cast<ValueDefNode>(&other)) {
+    if (auto* cast_other = dyn_cast<InstSinkNode>(&other)) {
       return inst == cast_other->inst;
     } else {
       return false;
@@ -154,19 +170,30 @@ public:
   }
 
   bool isLessThan(const BladeNode& other) const {
-    if (auto* cast_other = dyn_cast<ValueDefNode>(&other)) {
+    if (auto* cast_other = dyn_cast<InstSinkNode>(&other)) {
       return inst < cast_other->inst;
     } else {
       return false;
     }
   }
+
+  raw_ostream& outputNode(raw_ostream& os) const {
+    return os << '"' << "sink: " << *inst << '"';
+  }
 };
+
+// struct BladeNodePtrComp
+// {
+//   bool operator()(const BladeNode* &lhs, const BladeNode* &rhs) const {
+//     return *lhs < *rhs;
+//   }
+// };
 
 class BladeGraph {
 private:
   SmallVector<BladeNode*> nodes;
-  BladeNode source_node;
-  BladeNode sink_node;
+  DistinguishedNode source_node;
+  DistinguishedNode sink_node;
 
 public:
   using iterator = typename SmallVector<BladeNode*>::iterator;
@@ -174,6 +201,8 @@ public:
   using reverse_iterator = typename SmallVector<BladeNode*>::reverse_iterator;
   using const_reverse_iterator = typename SmallVector<BladeNode*>::const_reverse_iterator;
 
+
+public:
   BladeGraph()
     : nodes(SmallVector<BladeNode*>()),
       source_node(DistinguishedNode(0)),
@@ -183,14 +212,11 @@ public:
     addNode(sink_node);
   }
 
-  BladeGraph(size_t predicted_size)
-    : nodes(SmallVector<BladeNode*>(predicted_size)),
-      source_node(DistinguishedNode(0)),
-      sink_node(DistinguishedNode(1))
-  {
-    addNode(source_node);
-    addNode(sink_node);
-  }
+  // ~BladeGraph() {
+  //   for (BladeNode* node : nodes) {
+  //     delete node;
+  //   }
+  // }
 
   void addEdge(BladeNode &from, BladeNode &to) {
     addEdge(from, to, 1);
@@ -212,8 +238,27 @@ public:
 
   // INVARIANT: don't add nodes multiple times
   void addNode(BladeNode &node) {
-    nodes.push_back(&node);
+    if (findNode(node) == end()) {
+      nodes.push_back(&node);
+    }
   }
+
+  // std::pair<iterator, iterator> findNodes(const BladeNode &node1, const BladeNode &node2) {
+  //   iterator first = end();
+  //   iterator second = end();
+  //   for (iterator node = begin(); node != end(); ++node) {
+  //     if (**node == node1 && first == end()) {
+  //       first = node;
+  //     }
+  //     if (**node == node2 && second == end()) {
+  //       second = node;
+  //     }
+  //     if (first != end() && second != end()) {
+  //       break;
+  //     }
+  //   }
+  //   return std::pair<>(first, second);
+  // }
 
   iterator findNode(const BladeNode &node) {
     return find_if(nodes, [&node](const BladeNode *other) { return *other == node; });
@@ -319,6 +364,19 @@ public:
   const_reverse_iterator rend() const {
     return nodes.rend();
   }
+
+  friend raw_ostream& operator<<(raw_ostream& os, BladeGraph const &graph) {
+    os << "digraph {" << '\n';
+    for (const_iterator node = graph.begin(); node != graph.end(); ++node) {
+      os << **node << ';' << '\n';
+    }
+
+    for (const_iterator node = graph.begin(); node != graph.end(); ++node) {
+      (*node)->outputEdges(os);
+    }
+
+    return os << '}';
+  }
 };
 
 /// @brief Blade uses either lfences or SLH underneath the protect statement.
@@ -392,6 +450,16 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
     }
   }
 
+  void handleAllOperandsAsSink(Instruction &I) {
+    InstSinkNode* inst_sink_node = graph.addInstSinkNode(&I);
+
+    for (Use* operand = I.op_begin(); operand != I.op_end(); ++operand) {
+      if (auto *operand_inst = dyn_cast<Instruction>(operand)) {
+        graph.addEdgeFromValueToNode(operand_inst, inst_sink_node);
+      }
+    }
+  }
+
   void visitLoadInst(LoadInst &I) {
     // loads are both sources (their loaded values) and sinks (their addresses)
     // except for fills, which don't have sinks
@@ -421,9 +489,6 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
     handlePointerOperationAsSink(I, I.getPointerOperand());
   }
 
-  void visitPHINode (PHINode &I) {
-  }
-
   void visitSelectInst(SelectInst &I) {
   }
 
@@ -451,31 +516,26 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
   void visitIntrinsicInst(IntrinsicInst &I) {
   }
 
-  void visitCallInst(CallInst &I) {
-  }
-
-  void visitInvokeInst(InvokeInst &I) {
-  }
-
-  void visitCallBrInst(CallBrInst &I) {
-  }
-
   void visitReturnInst(ReturnInst &I) {
+    handleAllOperandsAsSink(I);
   }
 
   void visitBranchInst(BranchInst &I) {
+    if (I.isConditional()) {
+      handleAllOperandsAsSink(I);
+    }
   }
 
   void visitSwitchInst(SwitchInst &I) {
+    handleAllOperandsAsSink(I);
   }
 
   void visitIndirectBrInst(IndirectBrInst &I) {
-  }
-
-  void visitTerminator(Instruction &I) {
+    handleAllOperandsAsSink(I);
   }
 
   void visitCallBase(CallBase &I) {
+    handleAllOperandsAsSink(I);
   }
 
   void visitInstruction(Instruction &I) {
@@ -823,6 +883,8 @@ void runBlade(Function &F) {
   }
 
   BladeGraph graph = buildBladeGraph(F);
+  D(F << "\n\n");
+  D(graph << "\n\n");
   auto cutset = minCut(graph);
 
   insertProtections(F, cutset, FENCE);
