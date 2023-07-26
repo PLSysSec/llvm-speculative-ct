@@ -48,11 +48,11 @@ bool BladeEdge::operator<(const BladeEdge& other) const {
   return *target < *(other.target);
 }
 
-bool BladeNode::operator==(const BladeNode& other) const {
+bool OldBladeNode::operator==(const OldBladeNode& other) const {
   return isEqual(other);
 }
 
-bool BladeNode::operator<(const BladeNode& other) const {
+bool OldBladeNode::operator<(const OldBladeNode& other) const {
   if (getKind() != other.getKind()) {
     return getKind() < other.getKind();
   } else {
@@ -60,15 +60,15 @@ bool BladeNode::operator<(const BladeNode& other) const {
   }
 }
 
-void BladeNode::addEdge(BladeEdge edge) {
+void OldBladeNode::addEdge(BladeEdge edge) {
   edges.insert(edge);
 }
 
-void BladeNode::removeEdge(BladeEdge edge) {
+void OldBladeNode::removeEdge(BladeEdge edge) {
   edges.erase(edge);
 }
 
-bool BladeNode::hasEdgeTo(const BladeNode &other) const {
+bool OldBladeNode::hasEdgeTo(const OldBladeNode &other) const {
   for (BladeEdge edge : edges) {
     if (*(edge.target) == other) {
       return true;
@@ -77,7 +77,7 @@ bool BladeNode::hasEdgeTo(const BladeNode &other) const {
   return false;
 }
 
-void BladeNode::outputEdges(raw_ostream& os) const {
+void OldBladeNode::outputEdges(raw_ostream& os) const {
   for (BladeEdge edge : this->edges) {
     if (edge.weight > 0) {
       os << *this << " -> " << *(edge.target) << ";\n";
@@ -85,19 +85,19 @@ void BladeNode::outputEdges(raw_ostream& os) const {
   }
 }
 
-class DistinguishedNode : public BladeNode {
+class DistinguishedNode : public OldBladeNode {
 public:
   unsigned int id;
 
   DistinguishedNode(unsigned int id)
-    : BladeNode(BNK_DistinguishedNode),
+    : OldBladeNode(BNK_DistinguishedNode),
       id(id) {}
 
-  static bool classof(const BladeNode *node) {
+  static bool classof(const OldBladeNode *node) {
     return node->getKind() == BNK_DistinguishedNode;
   }
 
-  bool isEqual(const BladeNode& other) const {
+  bool isEqual(const OldBladeNode& other) const {
     if (auto* cast_other = dyn_cast<DistinguishedNode>(&other)) {
       return id == cast_other->id;
     } else {
@@ -105,7 +105,7 @@ public:
     }
   }
 
-  bool isLessThan(const BladeNode& other) const {
+  bool isLessThan(const OldBladeNode& other) const {
     if (auto* cast_other = dyn_cast<DistinguishedNode>(&other)) {
       return id < cast_other->id;
     } else {
@@ -118,27 +118,27 @@ public:
   }
 };
 
-class ValueDefNode : public BladeNode {
+class OldValueDefNode : public OldBladeNode {
 public:
   Instruction* inst;
 
-  ValueDefNode(Instruction* inst)
-    : BladeNode(BNK_ValueDefNode), inst(inst) {}
+  OldValueDefNode(Instruction* inst)
+    : OldBladeNode(BNK_ValueDefNode), inst(inst) {}
 
-  static bool classof(const BladeNode *node) {
+  static bool classof(const OldBladeNode *node) {
     return node->getKind() == BNK_ValueDefNode;
   }
 
-  bool isEqual(const BladeNode& other) const {
-    if (auto* cast_other = dyn_cast<ValueDefNode>(&other)) {
+  bool isEqual(const OldBladeNode& other) const {
+    if (auto* cast_other = dyn_cast<OldValueDefNode>(&other)) {
       return inst == cast_other->inst;
     } else {
       return false;
     }
   }
 
-  bool isLessThan(const BladeNode& other) const {
-    if (auto* cast_other = dyn_cast<ValueDefNode>(&other)) {
+  bool isLessThan(const OldBladeNode& other) const {
+    if (auto* cast_other = dyn_cast<OldValueDefNode>(&other)) {
       return inst < cast_other->inst;
     } else {
       return false;
@@ -150,27 +150,27 @@ public:
   }
 };
 
-class InstSinkNode : public BladeNode {
+class InstSinkNodeOld : public OldBladeNode {
 public:
   Instruction* inst;
 
-  InstSinkNode(Instruction* inst)
-    : BladeNode(BNK_InstSinkNode), inst(inst) {}
+  InstSinkNodeOld(Instruction* inst)
+    : OldBladeNode(BNK_InstSinkNode), inst(inst) {}
 
-  static bool classof(const BladeNode *node) {
+  static bool classof(const OldBladeNode *node) {
     return node->getKind() == BNK_InstSinkNode;
   }
 
-  bool isEqual(const BladeNode& other) const {
-    if (auto* cast_other = dyn_cast<InstSinkNode>(&other)) {
+  bool isEqual(const OldBladeNode& other) const {
+    if (auto* cast_other = dyn_cast<InstSinkNodeOld>(&other)) {
       return inst == cast_other->inst;
     } else {
       return false;
     }
   }
 
-  bool isLessThan(const BladeNode& other) const {
-    if (auto* cast_other = dyn_cast<InstSinkNode>(&other)) {
+  bool isLessThan(const OldBladeNode& other) const {
+    if (auto* cast_other = dyn_cast<InstSinkNodeOld>(&other)) {
       return inst < cast_other->inst;
     } else {
       return false;
@@ -189,22 +189,213 @@ public:
 //   }
 // };
 
+class BladeNode {
+public:
+  virtual size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const = 0;
+  virtual raw_ostream& outputNode(raw_ostream& os) const = 0;
+  friend raw_ostream& operator<<(raw_ostream& os, BladeNode const &node) {
+    return node.outputNode(os);
+  }
+};
+
+class SourceNode : public BladeNode {
+public:
+  size_t source_index;
+
+  SourceNode(size_t source_index)
+    : source_index(source_index) {}
+
+  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
+    return source_index;
+  }
+
+  raw_ostream& outputNode(raw_ostream& os) const {
+    return os << "source";
+  }
+};
+
+class SinkNode : public BladeNode {
+public:
+  size_t sink_index;
+
+  SinkNode(size_t sink_index)
+    : sink_index(sink_index) {}
+
+  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
+    return sink_index;
+  }
+
+  raw_ostream& outputNode(raw_ostream& os) const {
+    return os << "sink";
+  }
+};
+
+class ValueDefNode : public BladeNode {
+public:
+  Instruction* inst;
+
+  ValueDefNode(Instruction* inst)
+    : inst(inst) {}
+
+  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
+    return instruction_to_index[inst] * 2;
+  }
+
+  raw_ostream& outputNode(raw_ostream& os) const {
+    return os << '"' << "defn: " << *inst << '"';
+  }
+};
+
+class InstSinkNode : public BladeNode {
+public:
+  Instruction* inst;
+
+  InstSinkNode(Instruction* inst)
+    : inst(inst) {}
+
+  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
+    return instruction_to_index[inst] * 2 + 1;
+  }
+
+  raw_ostream& outputNode(raw_ostream& os) const {
+    return os << '"' << "sink: " << *inst << '"';
+  }
+};
+
+class NewBladeGraph {
+public:
+  using edge_iterator = typename std::vector<bool>::iterator;
+
+private:
+  std::vector<bool> edges;
+  ValueMap<Instruction*, size_t> instruction_to_index;
+  std::vector<Instruction*> index_to_instruction;
+
+  size_t num_nodes;
+  SourceNode source_node = SourceNode(0);
+  SinkNode sink_node = SinkNode(0);
+
+public:
+  NewBladeGraph(Function &F) {
+    size_t num_insts = 0;
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : BB) {
+        num_insts++;
+      }
+    }
+    num_nodes = num_insts * 2 + 2;
+    edges.reserve(num_nodes * num_nodes);
+    std::fill_n(std::back_inserter(edges), num_nodes * num_nodes, 0);
+    source_node = SourceNode(num_nodes - 2);
+    sink_node = SinkNode(num_nodes - 1);
+    index_to_instruction.reserve(num_insts);
+
+    size_t ii = 0;
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : BB) {
+        index_to_instruction.push_back(&I);
+        instruction_to_index[&I] = ii;
+        ii++;
+      }
+    }
+  }
+
+  size_t nodeIndex(const BladeNode &node) {
+    return node.index(instruction_to_index);
+  }
+
+  edge_iterator edgesBegin(const BladeNode &node) {
+    return edges.begin() + (nodeIndex(node) * num_nodes);
+  }
+
+  edge_iterator edgesEnd(const BladeNode &node) {
+    return edges.begin() + (nodeIndex(node) * num_nodes) + num_nodes;
+  }
+
+  bool getEdge(const BladeNode &from, const BladeNode &to) {
+    return *(edgesBegin(from) + nodeIndex(to));
+  }
+
+  void addEdge(const BladeNode &from, const BladeNode &to) {
+    *(edgesBegin(from) + nodeIndex(to)) = 1;
+  }
+
+  void markAsSource(Instruction* inst) {
+    addEdge(source_node, ValueDefNode(inst));
+  }
+
+  void markAsSink(Instruction* inst) {
+    addEdge(InstSinkNode(inst), sink_node);
+  }
+
+  raw_ostream& outputGraph(raw_ostream& os) {
+    os << "digraph {" << '\n';
+
+    for (Instruction* from_inst : index_to_instruction) {
+      for (Instruction* to_inst : index_to_instruction) {
+        ValueDefNode fromDef = ValueDefNode(from_inst);
+        InstSinkNode fromSink = InstSinkNode(from_inst);
+        ValueDefNode toDef = ValueDefNode(to_inst);
+        InstSinkNode toSink = InstSinkNode(to_inst);
+        for (auto from : std::initializer_list<BladeNode*>{&fromDef, &fromSink}) {
+          for (auto to : std::initializer_list<BladeNode*>{&toDef, &toSink}) {
+            if (getEdge(*from, *to)) {
+              os << *from << " -> " << *to << ';' << '\n';
+            }
+          }
+        }
+      }
+    }
+    for (Instruction* node_inst : index_to_instruction) {
+      ValueDefNode nodeDef = ValueDefNode(node_inst);
+      InstSinkNode nodeSink = InstSinkNode(node_inst);
+      for (auto node : std::initializer_list<BladeNode*>{&nodeDef, &nodeSink}) {
+        if (getEdge(source_node, *node)) {
+          os << source_node << " -> " << *node << ';' << '\n';
+        }
+        if (getEdge(sink_node, *node)) {
+          os << sink_node << " -> " << *node << ';' << '\n';
+        }
+        if (getEdge(*node, source_node)) {
+          os << *node << " -> " << source_node << ';' << '\n';
+        }
+        if (getEdge(*node, sink_node)) {
+          os << *node << " -> " << sink_node << ';' << '\n';
+        }
+      }
+    }
+    if (getEdge(source_node, sink_node)) {
+      os << source_node << " -> " << sink_node << ';' << '\n';
+    }
+    if (getEdge(sink_node, source_node)) {
+      os << sink_node << " -> " << source_node << ';' << '\n';
+    }
+
+
+    return os << '}';
+  }
+
+  friend raw_ostream& operator<<(raw_ostream& os, NewBladeGraph &graph) {
+    return graph.outputGraph(os);
+  }
+};
+
 class BladeGraph {
 private:
-  SmallVector<BladeNode*> nodes;
+  SmallVector<OldBladeNode*> nodes;
   DistinguishedNode source_node;
   DistinguishedNode sink_node;
 
 public:
-  using iterator = typename SmallVector<BladeNode*>::iterator;
-  using const_iterator = typename SmallVector<BladeNode*>::const_iterator;
-  using reverse_iterator = typename SmallVector<BladeNode*>::reverse_iterator;
-  using const_reverse_iterator = typename SmallVector<BladeNode*>::const_reverse_iterator;
+  using iterator = typename SmallVector<OldBladeNode*>::iterator;
+  using const_iterator = typename SmallVector<OldBladeNode*>::const_iterator;
+  using reverse_iterator = typename SmallVector<OldBladeNode*>::reverse_iterator;
+  using const_reverse_iterator = typename SmallVector<OldBladeNode*>::const_reverse_iterator;
 
 
 public:
   BladeGraph()
-    : nodes(SmallVector<BladeNode*>()),
+    : nodes(SmallVector<OldBladeNode*>()),
       source_node(DistinguishedNode(0)),
       sink_node(DistinguishedNode(1))
   {
@@ -218,11 +409,11 @@ public:
   //   }
   // }
 
-  void addEdge(BladeNode &from, BladeNode &to) {
+  void addEdge(OldBladeNode &from, OldBladeNode &to) {
     addEdge(from, to, 1);
   }
 
-  void addEdge(BladeNode &from, BladeNode &to, unsigned int weight) {
+  void addEdge(OldBladeNode &from, OldBladeNode &to, unsigned int weight) {
     iterator from_ptr = findNode(from);
     assert((from_ptr != end()) && "from node missing");
     (*from_ptr)->addEdge(BladeEdge(weight, &to));
@@ -237,7 +428,7 @@ public:
   }
 
   // INVARIANT: don't add nodes multiple times
-  void addNode(BladeNode &node) {
+  void addNode(OldBladeNode &node) {
     if (findNode(node) == end()) {
       nodes.push_back(&node);
     }
@@ -260,37 +451,37 @@ public:
   //   return std::pair<>(first, second);
   // }
 
-  iterator findNode(const BladeNode &node) {
-    return find_if(nodes, [&node](const BladeNode *other) { return *other == node; });
+  iterator findNode(const OldBladeNode &node) {
+    return find_if(nodes, [&node](const OldBladeNode *other) { return *other == node; });
   }
 
-  const_iterator findNode(const BladeNode &node) const {
+  const_iterator findNode(const OldBladeNode &node) const {
     return const_cast<iterator>(static_cast<const BladeGraph &>(*this).findNode(node));
   }
 
   void addDefinitionNode(Instruction* inst) {
-    ValueDefNode* value_def_node = new ValueDefNode(inst);
+    OldValueDefNode* value_def_node = new OldValueDefNode(inst);
     addNode(*value_def_node);
   }
 
-  InstSinkNode* addInstSinkNode(Instruction* inst) {
-    InstSinkNode* inst_sink_node = new InstSinkNode(inst);
+  InstSinkNodeOld* addInstSinkNode(Instruction* inst) {
+    InstSinkNodeOld* inst_sink_node = new InstSinkNodeOld(inst);
     addNode(*inst_sink_node);
     addEdge(*inst_sink_node, sink_node);
     return inst_sink_node;
   }
 
-  void addEdgeFromValueToNode(Instruction* value_inst, BladeNode* blade_node) {
-    BladeNode** value_node = findNode(ValueDefNode(value_inst));
+  void addEdgeFromValueToNode(Instruction* value_inst, OldBladeNode* blade_node) {
+    OldBladeNode** value_node = findNode(OldValueDefNode(value_inst));
     if (value_node != end()) {
       addEdge(**value_node, *blade_node);
     }
   }
 
   void addEdgeFromValueToValue(Instruction* from_inst, Instruction* to_inst) {
-    BladeNode** from_node = findNode(ValueDefNode(from_inst));
+    OldBladeNode** from_node = findNode(OldValueDefNode(from_inst));
     if (from_node != end()) {
-      BladeNode** to_node = findNode(ValueDefNode(to_inst));
+      OldBladeNode** to_node = findNode(OldValueDefNode(to_inst));
       if (to_node != end()) {
         addEdge(from_node, to_node);
       }
@@ -298,7 +489,7 @@ public:
   }
 
   void markAsSource(Instruction* value_inst) {
-    BladeNode** value_node = findNode(ValueDefNode(value_inst));
+    OldBladeNode** value_node = findNode(OldValueDefNode(value_inst));
     if (value_node != end()) {
       addEdge(source_node, **value_node);
     }
@@ -437,25 +628,25 @@ void printGraph(dag_type **graph, bool visited[], int size) {
 }
 
 struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
-  BladeGraph &graph;
+  NewBladeGraph &graph;
 
-  BladeGraphInsertVisitor(BladeGraph &graph)
+  BladeGraphInsertVisitor(NewBladeGraph &graph)
     : graph(graph) {}
 
   void handlePointerOperationAsSink(Instruction &I, Value* pointer_operand) {
-    InstSinkNode* inst_sink_node = graph.addInstSinkNode(&I);
+    graph.markAsSink(&I);
 
     if (auto *pointer_inst = dyn_cast<Instruction>(pointer_operand)) {
-      graph.addEdgeFromValueToNode(pointer_inst, inst_sink_node);
+      graph.addEdge(ValueDefNode(pointer_inst), InstSinkNode(&I));
     }
   }
 
   void handleAllOperandsAsSink(Instruction &I) {
-    InstSinkNode* inst_sink_node = graph.addInstSinkNode(&I);
+    graph.markAsSink(&I);
 
     for (Use* operand = I.op_begin(); operand != I.op_end(); ++operand) {
       if (auto *operand_inst = dyn_cast<Instruction>(operand)) {
-        graph.addEdgeFromValueToNode(operand_inst, inst_sink_node);
+        graph.addEdge(ValueDefNode(operand_inst), InstSinkNode(&I));
       }
     }
   }
@@ -489,32 +680,32 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
     handlePointerOperationAsSink(I, I.getPointerOperand());
   }
 
-  void visitSelectInst(SelectInst &I) {
-  }
+  // void visitSelectInst(SelectInst &I) {
+  // }
 
-  void visitMemSetInst(MemSetInst &I) {
-  }
+  // void visitMemSetInst(MemSetInst &I) {
+  // }
 
-  void visitMemSetInlineInst(MemSetInlineInst &I) {
-  }
+  // void visitMemSetInlineInst(MemSetInlineInst &I) {
+  // }
 
-  void visitMemCpyInst(MemCpyInst &I) {
-  }
+  // void visitMemCpyInst(MemCpyInst &I) {
+  // }
 
-  void visitMemCpyInlineInst(MemCpyInlineInst &I) {
-  }
+  // void visitMemCpyInlineInst(MemCpyInlineInst &I) {
+  // }
 
-  void visitMemMoveInst(MemMoveInst &I) {
-  }
+  // void visitMemMoveInst(MemMoveInst &I) {
+  // }
 
-  void visitMemTransferInst(MemTransferInst &I) {
-  }
+  // void visitMemTransferInst(MemTransferInst &I) {
+  // }
 
-  void visitMemIntrinsic (MemIntrinsic &I) {
-  }
+  // void visitMemIntrinsic (MemIntrinsic &I) {
+  // }
 
-  void visitIntrinsicInst(IntrinsicInst &I) {
-  }
+  // void visitIntrinsicInst(IntrinsicInst &I) {
+  // }
 
   void visitReturnInst(ReturnInst &I) {
     handleAllOperandsAsSink(I);
@@ -538,134 +729,15 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
     handleAllOperandsAsSink(I);
   }
 
-  void visitInstruction(Instruction &I) {
-  }
+  // void visitInstruction(Instruction &I) {
+  // }
 };
 
-  // // find sources and sinks, and add edges to/from our global source and sink nodes
-  // for block in func.layout.blocks() {
-  //     for inst in func.layout.block_insts(block) {
-  //         let idata = &func.stencil.dfg.insts[inst];
-  //         let op = idata.opcode();
-  //         if op.can_load() {
-  //             // loads are both sources (their loaded values) and sinks (their addresses)
-  //             // except for fills, which don't have sinks
 
-  //             // handle load as a source
-  //             if constant_addr_loads_are_srcs || !load_is_constant_addr(func, inst) {
-  //                 for &result in func.dfg.inst_results(inst) {
-  //                     builder.mark_as_source(result);
-  //                 }
-  //             }
+NewBladeGraph* buildBladeGraph(Function &F) {
+  NewBladeGraph* graph = new NewBladeGraph(F);
 
-  //             // handle load as a sink
-  //             let inst_sink_node = builder.add_sink_node_for_inst(inst);
-  //             // for each address component variable of inst,
-  //             // add edge address_component_variable_node -> sink
-  //             // XXX X86Pop has an implicit dependency on %rsp which is not captured here
-  //             for &arg in func.dfg.inst_args(inst) {
-  //                 builder.add_edge_from_value_to_node(arg, inst_sink_node);
-  //             }
-  //         } else if op.can_store() {
-  //             // loads are both sources and sinks, but stores are just sinks
-
-  //             let inst_sink_node = builder.add_sink_node_for_inst(inst);
-  //             // similar to the load case above, but special treatment for the value being stored
-  //             // XXX X86Push has an implicit dependency on %rsp which is not captured here
-  //             if store_values_are_sinks {
-  //                 for &arg in func.dfg.inst_args(inst) {
-  //                     builder.add_edge_from_value_to_node(arg, inst_sink_node);
-  //                 }
-  //             } else {
-  //                 // SC: as far as I can tell, all stores (that have arguments) always
-  //                 //   have the value being stored as the first argument
-  //                 //   and everything after is address args
-  //                 for &arg in func.dfg.inst_args(inst).iter().skip(1) {
-  //                     // skip the first argument
-  //                     builder.add_edge_from_value_to_node(arg, inst_sink_node);
-  //                 }
-  //             };
-  //         } else if op.is_branch() {
-  //             // conditional branches are sinks
-
-  //             let inst_sink_node = builder.add_sink_node_for_inst(inst);
-
-  //             // blade only does conditional branches but this will handle indirect jumps as well
-  //             // `inst_fixed_args` gets the condition args for branches,
-  //             //   and ignores the destination block params (which are also included in args)
-  //             for &arg in func.dfg.inst_fixed_args(inst) {
-  //                 builder.add_edge_from_value_to_node(arg, inst_sink_node);
-  //             }
-  //         }
-  //         if op.is_call() {
-  //             // to avoid interprocedural analysis, we require that function
-  //             // arguments are stable, so we mark arguments to a call as sinks
-  //             let inst_sink_node = builder.add_sink_node_for_inst(inst);
-  //             for &arg in func.dfg.inst_args(inst) {
-  //                 builder.add_edge_from_value_to_node(arg, inst_sink_node);
-  //             }
-  //         }
-  //         if op.is_return() {
-  //             // to avoid interprocedural analysis, we require that function
-  //             // return values are stable, so we mark return values as sinks
-  //             let inst_sink_node = builder.add_sink_node_for_inst(inst);
-  //             for &arg in func.dfg.inst_args(inst) {
-  //                 builder.add_edge_from_value_to_node(arg, inst_sink_node);
-  //             }
-  //         }
-  //     }
-  // }
-
-  // // we no longer mark function parameters as transient, since we require that
-  // // they are stable on the caller side (so this is commented)
-  // /*
-  // let entry_block = func
-  //     .layout
-  //     .entry_block()
-  //     .expect("Failed to find entry block");
-  // for &func_param in func.dfg.block_params(entry_block) {
-  //     // parameters of the entry block == parameters of the function
-  //     builder.mark_as_source(func_param);
-  // }
-  // */
-
-  // // now add edges for actual data dependencies
-  // // for instance in the following pseudocode:
-  // //     x = load y
-  // //     z = x + 2
-  // //     branch on z
-  // // we have z -> sink and source -> x, but need x -> z yet
-  // let def_use_graph = DefUseGraph::for_function(func, cfg);
-  // for val in func.dfg.values() {
-  //     let node = builder.bladenode_to_node_map[&BladeNode::ValueDef(val)]; // must exist
-  //     for val_use in def_use_graph.uses_of_val(val) {
-  //         match *val_use {
-  //             ValueUse::Inst(inst_use) => {
-  //                 // add an edge from val to the result of inst_use
-  //                 // TODO this assumes that all results depend on all operands;
-  //                 // are there any instructions where this is not the case for our purposes?
-  //                 for &result in func.dfg.inst_results(inst_use) {
-  //                     builder.add_edge_from_node_to_value(node, result);
-  //                 }
-  //             }
-  //             ValueUse::Value(val_use) => {
-  //                 // add an edge from val to val_use
-  //                 builder.add_edge_from_node_to_value(node, val_use);
-  //             }
-  //         }
-  //     }
-  // }
-
-BladeGraph buildBladeGraph(Function &F) {
-  BladeGraph graph = BladeGraph();
-
-  for (BasicBlock &BB : F) {
-    for (Instruction &I : BB) {
-      graph.addDefinitionNode(&I);
-    }
-  }
-
-  BladeGraphInsertVisitor insertVisitor = BladeGraphInsertVisitor(graph);
+  BladeGraphInsertVisitor insertVisitor = BladeGraphInsertVisitor(*graph);
   insertVisitor.visit(F);
 
   // add def-use edges
@@ -673,7 +745,7 @@ BladeGraph buildBladeGraph(Function &F) {
     for (Instruction &I : BB) {
       for (User *U : I.users()) {
         if (auto *user_inst = dyn_cast<Instruction>(U)) {
-          graph.addEdgeFromValueToValue(&I, user_inst);
+          graph->addEdge(ValueDefNode(&I), ValueDefNode(user_inst));
         }
       }
     }
@@ -791,6 +863,9 @@ void dfs(dag_type **residual_graph, int s, bool visited[], int num_vertices) {
 SmallSet<Instruction*, 16> minCut(BladeGraph &graph) {
   SmallSet<Instruction*, 16> cutset;
 
+  std::queue<OldBladeNode*> queue;
+  std::vector<OldBladeNode*> preds;
+
   return cutset;
 }
 
@@ -882,12 +957,14 @@ void runBlade(Function &F) {
     return;
   }
 
-  BladeGraph graph = buildBladeGraph(F);
+  NewBladeGraph* graph = buildBladeGraph(F);
   D(F << "\n\n");
-  D(graph << "\n\n");
-  auto cutset = minCut(graph);
+  D(*graph << "\n\n");
+  // auto cutset = minCut(graph);
 
-  insertProtections(F, cutset, FENCE);
+  delete graph;
+
+  // insertProtections(F, cutset, FENCE);
 }
 
 namespace {
