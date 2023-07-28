@@ -30,9 +30,6 @@ using namespace llvm;
 #define DEBUG_TYPE "matt"
 #define D(X) DEBUG_WITH_TYPE("matt", errs() << X)
 
-STATISTIC(NumTransient, "Number of transient Nodes added.");
-STATISTIC(NumStable, "Number of stable Nodes added.");
-STATISTIC(NumLeaks, "Total number of distinct paths that leak secrets.");
 STATISTIC(NumCuts, "Total number of cuts resulting in a protect statement.");
 
 typedef SmallVector<Instruction*> InstVec1D;
@@ -41,11 +38,30 @@ typedef int dag_type;
 
 class BladeNode {
 public:
+  /// Discriminator for LLVM-style RTTI (dyn_cast<> et al.)
+  enum BladeNodeKind {
+    BNK_SourceNode,
+    BNK_SinkNode,
+    BNK_InstructionNode,
+    BNK_ValueDefNode,
+    BNK_InstSinkNode
+  };
+
+public:
   virtual size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const = 0;
   virtual raw_ostream& outputNode(raw_ostream& os) const = 0;
   friend raw_ostream& operator<<(raw_ostream& os, BladeNode const &node) {
     return node.outputNode(os);
   }
+
+private:
+  const BladeNodeKind kind;
+
+public:
+  BladeNodeKind getKind() const { return kind; }
+  BladeNode(BladeNodeKind kind) : kind(kind) {}
+
+  static bool classof(const BladeNode* node);
 };
 
 class SourceNode : public BladeNode {
@@ -53,10 +69,23 @@ public:
   size_t source_index;
 
   SourceNode(size_t source_index)
-    : source_index(source_index) {}
+    : BladeNode(BNK_SourceNode), source_index(source_index) {}
 
   size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
     return source_index;
+  }
+
+  SourceNode& operator=(SourceNode&& other) noexcept {
+    if (this == &other) {
+      return *this;
+    }
+
+    source_index = other.source_index;
+    return *this;
+  }
+
+  static bool classof(const BladeNode *node) {
+    return node->getKind() == BNK_SourceNode;
   }
 
   raw_ostream& outputNode(raw_ostream& os) const {
@@ -69,10 +98,23 @@ public:
   size_t sink_index;
 
   SinkNode(size_t sink_index)
-    : sink_index(sink_index) {}
+    : BladeNode(BNK_SinkNode), sink_index(sink_index) {}
 
   size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
     return sink_index;
+  }
+
+  SinkNode& operator=(SinkNode&& other) noexcept {
+    if (this == &other) {
+      return *this;
+    }
+
+    sink_index = other.sink_index;
+    return *this;
+  }
+
+  static bool classof(const BladeNode *node) {
+    return node->getKind() == BNK_SinkNode;
   }
 
   raw_ostream& outputNode(raw_ostream& os) const {
@@ -80,15 +122,30 @@ public:
   }
 };
 
-class ValueDefNode : public BladeNode {
+class InstructionNode : public BladeNode {
 public:
   Instruction* inst;
 
+  InstructionNode(BladeNodeKind kind, Instruction* inst)
+    : BladeNode(kind), inst(inst) {}
+
+  static bool classof(const BladeNode *node) {
+    return node->getKind() >= BNK_SinkNode
+      && node->getKind() <= BNK_InstSinkNode;
+  }
+};
+
+class ValueDefNode : public InstructionNode {
+public:
   ValueDefNode(Instruction* inst)
-    : inst(inst) {}
+    : InstructionNode(BNK_ValueDefNode, inst) {}
 
   size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
     return instruction_to_index[inst] * 2;
+  }
+
+  static bool classof(const BladeNode *node) {
+    return node->getKind() == BNK_ValueDefNode;
   }
 
   raw_ostream& outputNode(raw_ostream& os) const {
@@ -96,15 +153,17 @@ public:
   }
 };
 
-class InstSinkNode : public BladeNode {
+class InstSinkNode : public InstructionNode {
 public:
-  Instruction* inst;
-
   InstSinkNode(Instruction* inst)
-    : inst(inst) {}
+    : InstructionNode(BNK_InstSinkNode, inst) {}
 
   size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
     return instruction_to_index[inst] * 2 + 1;
+  }
+
+  static bool classof(const BladeNode *node) {
+    return node->getKind() == BNK_InstSinkNode;
   }
 
   raw_ostream& outputNode(raw_ostream& os) const {
@@ -115,6 +174,7 @@ public:
 class BladeGraph {
 public:
   using edge_iterator = typename std::vector<bool>::iterator;
+  using edge_ref = typename std::vector<bool>::iterator::reference;
 
 private:
   std::vector<bool> edges;
@@ -134,8 +194,7 @@ public:
       }
     }
     num_nodes = num_insts * 2 + 2;
-    edges.reserve(num_nodes * num_nodes);
-    std::fill_n(std::back_inserter(edges), num_nodes * num_nodes, 0);
+    edges.resize(num_nodes * num_nodes, false);
     source_node = SourceNode(num_nodes - 2);
     sink_node = SinkNode(num_nodes - 1);
     index_to_instruction.reserve(num_insts);
@@ -154,6 +213,27 @@ public:
     return node.index(instruction_to_index);
   }
 
+  Instruction* nodeIndexToInstruction(size_t index) {
+    return index_to_instruction[index / 2];
+  }
+
+  // TODO: this leaks memory
+  BladeNode* nodeIndexToBladeNode(size_t index) {
+    if (index == nodeIndex(source_node)) {
+      return &source_node;
+    } else if (index == nodeIndex(sink_node)) {
+      return &sink_node;
+    }
+    Instruction* inst = nodeIndexToInstruction(index);
+    if (index % 2 == 0) {
+      auto result_node = new ValueDefNode(inst);
+      return result_node;
+    } else {
+      auto result_node = new InstSinkNode(inst);
+      return result_node;
+    }
+  }
+
   edge_iterator edgesBegin(const BladeNode &node) {
     return edges.begin() + (nodeIndex(node) * num_nodes);
   }
@@ -162,12 +242,32 @@ public:
     return edges.begin() + (nodeIndex(node) * num_nodes) + num_nodes;
   }
 
-  bool getEdge(const BladeNode &from, const BladeNode &to) {
-    return *(edgesBegin(from) + nodeIndex(to));
+  edge_iterator edgesBegin(size_t node_index) {
+    return edges.begin() + (node_index * num_nodes);
+  }
+
+  edge_iterator edgesEnd(size_t node_index) {
+    return edges.begin() + (node_index * num_nodes) + num_nodes;
+  }
+
+  edge_ref getEdge(const BladeNode &from, const BladeNode &to) {
+    return edgesBegin(from)[nodeIndex(to)];
+  }
+
+  edge_ref getEdge(size_t from_index, size_t to_index) {
+    return edgesBegin(from_index)[to_index];
+  }
+
+  bool hasEdge(const BladeNode &from, const BladeNode &to) {
+    return getEdge(from, to);
+  }
+
+  bool hasEdge(size_t from_index, size_t to_index) {
+    return getEdge(from_index, to_index);
   }
 
   void addEdge(const BladeNode &from, const BladeNode &to) {
-    *(edgesBegin(from) + nodeIndex(to)) = 1;
+    getEdge(from, to) = 1;
   }
 
   void markAsSource(Instruction* inst) {
@@ -178,51 +278,199 @@ public:
     addEdge(InstSinkNode(inst), sink_node);
   }
 
+  void debugParents(std::vector<size_t> &parents) {
+    size_t node_index = nodeIndex(sink_node);
+    while (node_index != nodeIndex(source_node)) {
+      debugNodeIndex(node_index);
+      size_t parent_index = parents[node_index];
+      node_index = parent_index;
+      D("\n");
+    }
+    debugNodeIndex(node_index);
+    D("\n\n");
+  }
+
+  SmallVector<std::pair<BladeNode*, BladeNode*>> minCut() {
+    SmallVector<std::pair<BladeNode*, BladeNode*>> cutset;
+
+    std::vector<bool> original_edges = edges;
+
+    std::vector<size_t> parents;
+    parents.resize(num_nodes);
+
+    while (flowBfs(parents)) {
+      bool path_flow = 1;
+      size_t node_index = nodeIndex(sink_node);
+      while (node_index != nodeIndex(source_node)) {
+        size_t parent_index = parents[node_index];
+        path_flow = std::min(path_flow, hasEdge(parent_index, node_index)); // NOTE: not strictly necessary since weights are boolean but easy future proofing
+        node_index = parent_index;
+      }
+
+      node_index = nodeIndex(sink_node);
+      while (node_index != nodeIndex(source_node)) {
+        size_t parent_index = parents[node_index];
+        getEdge(parent_index, node_index) = getEdge(parent_index, node_index) - path_flow;
+        getEdge(node_index, parent_index) = getEdge(node_index, parent_index) + path_flow;
+        node_index = parent_index;
+      }
+    }
+
+    std::vector<bool> visited;
+    visited.resize(num_nodes, false);
+
+    flowDfs(nodeIndex(source_node), visited);
+
+    edges = original_edges;
+
+    for (size_t node_index = 0; node_index < num_nodes; node_index++) {
+      for (int other_index = 0; other_index < num_nodes; other_index++) {
+        if (visited[node_index] && !visited[other_index] && hasEdge(node_index, other_index)) {
+          cutset.push_back({nodeIndexToBladeNode(node_index), nodeIndexToBladeNode(other_index)});
+        }
+      }
+    }
+
+    return cutset;
+  }
+
+  bool flowBfs(std::vector<size_t> &parents) {
+    std::vector<bool> visited;
+    visited.resize(num_nodes, false);
+    std::queue<size_t> traversed;
+    size_t source_index = nodeIndex(source_node);
+
+    traversed.push(source_index);
+    visited[source_index] = true;
+
+    while (!traversed.empty()) {
+      size_t current_index = traversed.front();
+      traversed.pop();
+
+      for (int neighbor_index = 0; neighbor_index < num_nodes; neighbor_index++) {
+        if (!visited[neighbor_index] && hasEdge(current_index, neighbor_index)) {
+          traversed.push(neighbor_index);
+          parents[neighbor_index] = current_index;
+          visited[neighbor_index] = true;
+        }
+      }
+    }
+
+    return visited[nodeIndex(sink_node)];
+  }
+
+  void flowDfs(size_t start_index, std::vector<bool> &visited) {
+    visited[start_index] = true;
+    for (size_t node_index = 0; node_index < num_nodes; node_index++) {
+      if (!visited[node_index] && hasEdge(start_index, node_index)) {
+        flowDfs(node_index, visited);
+      }
+    }
+  }
+
+  // TODO: protect type
+  void debugNodeIndex(size_t node_index) {
+    if (node_index == nodeIndex(source_node)) {
+      D("source");
+    } else if (node_index == nodeIndex(sink_node)) {
+      D("sink");
+    } else {
+      D(*nodeIndexToInstruction(node_index));
+    }
+  }
+
   raw_ostream& outputGraph(raw_ostream& os) {
-    os << "digraph {" << '\n';
+    // os << "    ";
+    // for (size_t ii = 0; ii < num_nodes; ii++) {
+    //   if (ii < 10) {
+    //     os << "0";
+    //   }
+    //   os << ii << " ";
+    // }
+    // os << "\n";
+    // for (size_t ii = 0; ii < num_nodes; ii++) {
+    //   if (ii < 10) {
+    //     os << "0";
+    //   }
+    //   os << ii << ": ";
+    //   for (size_t jj = 0; jj < num_nodes; jj++) {
+    //     os << " " << edges[ii * num_nodes + jj] << " ";
+    //   }
+    //   if (ii == nodeIndex(source_node)) {
+    //     os << "source";
+    //   } else if (ii == nodeIndex(sink_node)) {
+    //     os << "sink";
+    //   } else {
+    //     os << *nodeIndexToInstruction(ii);
+    //   }
+    //   os << "\n";
+    // }
+    // os << "\n";
 
-    for (Instruction* from_inst : index_to_instruction) {
-      for (Instruction* to_inst : index_to_instruction) {
-        ValueDefNode fromDef = ValueDefNode(from_inst);
-        InstSinkNode fromSink = InstSinkNode(from_inst);
-        ValueDefNode toDef = ValueDefNode(to_inst);
-        InstSinkNode toSink = InstSinkNode(to_inst);
-        for (auto from : std::initializer_list<BladeNode*>{&fromDef, &fromSink}) {
-          for (auto to : std::initializer_list<BladeNode*>{&toDef, &toSink}) {
-            if (getEdge(*from, *to)) {
-              os << *from << " -> " << *to << ';' << '\n';
-            }
-          }
-        }
-      }
-    }
-    for (Instruction* node_inst : index_to_instruction) {
-      ValueDefNode nodeDef = ValueDefNode(node_inst);
-      InstSinkNode nodeSink = InstSinkNode(node_inst);
-      for (auto node : std::initializer_list<BladeNode*>{&nodeDef, &nodeSink}) {
-        if (getEdge(source_node, *node)) {
-          os << source_node << " -> " << *node << ';' << '\n';
-        }
-        if (getEdge(sink_node, *node)) {
-          os << sink_node << " -> " << *node << ';' << '\n';
-        }
-        if (getEdge(*node, source_node)) {
-          os << *node << " -> " << source_node << ';' << '\n';
-        }
-        if (getEdge(*node, sink_node)) {
-          os << *node << " -> " << sink_node << ';' << '\n';
-        }
-      }
-    }
-    if (getEdge(source_node, sink_node)) {
-      os << source_node << " -> " << sink_node << ';' << '\n';
-    }
-    if (getEdge(sink_node, source_node)) {
-      os << sink_node << " -> " << source_node << ';' << '\n';
-    }
+    // os << "digraph {" << '\n';
 
+    // os << "node[shape=rectangle];\n";
 
-    return os << '}';
+    // for (Instruction* from_inst : index_to_instruction) {
+    //   for (Instruction* to_inst : index_to_instruction) {
+    //     ValueDefNode fromDef = ValueDefNode(from_inst);
+    //     InstSinkNode fromSink = InstSinkNode(from_inst);
+    //     ValueDefNode toDef = ValueDefNode(to_inst);
+    //     InstSinkNode toSink = InstSinkNode(to_inst);
+    //     for (auto from : std::initializer_list<BladeNode*>{&fromDef, &fromSink}) {
+    //       for (auto to : std::initializer_list<BladeNode*>{&toDef, &toSink}) {
+    //         if (hasEdge(*from, *to)) {
+    //           os << *from << " -> " << *to << ';' << '\n';
+    //         }
+    //       }
+    //     }
+    //   }
+    // }
+    // for (Instruction* node_inst : index_to_instruction) {
+    //   ValueDefNode nodeDef = ValueDefNode(node_inst);
+    //   InstSinkNode nodeSink = InstSinkNode(node_inst);
+    //   for (auto node : std::initializer_list<BladeNode*>{&nodeDef, &nodeSink}) {
+    //     if (hasEdge(source_node, *node)) {
+    //       os << source_node << " -> " << *node << ';' << '\n';
+    //     }
+    //     if (hasEdge(sink_node, *node)) {
+    //       os << sink_node << " -> " << *node << ';' << '\n';
+    //     }
+    //     if (hasEdge(*node, source_node)) {
+    //       os << *node << " -> " << source_node << ';' << '\n';
+    //     }
+    //     if (hasEdge(*node, sink_node)) {
+    //       os << *node << " -> " << sink_node << ';' << '\n';
+    //     }
+    //   }
+    // }
+    // if (hasEdge(source_node, sink_node)) {
+    //   os << source_node << " -> " << sink_node << ';' << '\n';
+    // }
+    // if (hasEdge(sink_node, source_node)) {
+    //   os << sink_node << " -> " << source_node << ';' << '\n';
+    // }
+
+    // os << "node[shape=none, width=0, height=0, label=\"\"];\n";
+
+    // int ii = 0;
+    // os << "{" << "rank=same; " << ii << " -> " << source_node << "[style=invis]" << "}\n";
+    // ii++;
+    // for (Instruction* inst : index_to_instruction) {
+    //   ValueDefNode defNode = ValueDefNode(inst);
+    //   InstSinkNode sinkNode = InstSinkNode(inst);
+    //   os << "{" << "rank=same; " << ii << " -> " << defNode << " -> " << sinkNode << "[style=invis]" << "}\n";
+    //   ii++;
+    // }
+    // os << "{" << "rank=same; " << ii << " -> " << sink_node << "[style=invis];" << "}\n";
+    // ii++;
+    // for (ii = 0; ii < index_to_instruction.size() + 1; ii++) {
+    //   os << ii << " -> " << ii + 1 << "[style=invis];";
+    // }
+
+    // os << '}';
+
+    return os;
   }
 
   friend raw_ostream& operator<<(raw_ostream& os, BladeGraph &graph) {
@@ -235,57 +483,6 @@ enum ProtectType {
   FENCE,
   // SLH
 };
-
-/// @brief Pretty print useful statistics summarizing overall analysis.
-void printSummary() {
-  // S("--- Summary ---");
-  // N("\tTransient Marks: " << NumTransient);
-  // N("\tStable Marks: " << NumStable);
-  // N("\tTotal Leaks: " << NumLeaks);
-  // N("\tTotal Cuts: " << NumCuts);
-}
-
-/// @brief Used for command line data collection
-void printSummaryData() {
-  D("BladeSummaryData: " << "{" << "NumTransient: " << NumTransient << ", " << "NumStable: " << NumStable << ", " << "NumCuts: " << NumCuts << "}" << "\n");
-}
-
-/// @brief Print all instructions that make up the cutset.
-void printCutSet(SmallSetVector<Instruction*, 16> *cutset) {
-  // S("--- Cutset ---");
-  // for (auto I : *cutset) {
-  //   N("\t" << *I);
-  // }
-}
-
-/// @brief Pretty print Matrix representation of graph.
-void printGraph(dag_type **graph, int size) {
-  // RAW("digraph {\n");
-
-  // for (int row = 0; row < size; row++) {
-  //   for (int col = 0; col < size; col++) {
-  //     if (graph[row][col] > 0) {
-  //       RAW(row << " -> " << col <<";" << " ");
-  //     }
-  //   }
-  // }
-  // RAW("}\n");
-}
-
-/// @brief Pretty print Matrix representation of graph, highlighting visited nodes.
-void printGraph(dag_type **graph, bool visited[], int size) {
-  // for (int row = 0; row < size; row++) {
-  //   if (visited[row]) {
-  //     RAW("\033[31;1;4m" << row << ":\t[");
-  //   } else {
-  //     RAW(row << ":\t[");
-  //   }
-  //   for (int col = 0; col < size; col++) {
-  //     RAW(graph[row][col] << ", ");
-  //   }
-  //   RAW("]\n\033[0m");
-  // }
-}
 
 struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
   BladeGraph &graph;
@@ -413,189 +610,37 @@ BladeGraph* buildBladeGraph(Function &F) {
 
   return graph;
 }
+CallInst* getFenceCall(Function &F) {
+  Function* fence_fn = Intrinsic::getDeclaration(F.getParent(), Intrinsic::x86_sse2_lfence);
+  return CallInst::Create(fence_fn);
+}
 
-/// @brief Iterates over all all leaky paths and builds matrix representation of dependency chain.
-/// It also extends replaces each vertex X with vertex (X_i, X_o) where X_i is a vertex that keeps
-/// all incoming edges and vertex X_o keeps all outgoing edges. There is a single edge between vertex
-/// X_i and X_o in order for the Min Cut Algorithm to correctly identify the minimum cut. This leads
-/// to a Matrix that is twice the size as the original.
-// void populateGraph(InstVec1D &insts, dag_type **graph, int num_vertices, int og_num_vertices) {
-//   // Internal to this function, we first make a matrix representation without changing each
-//   // vertex X to (X_i, X_o) - this graph must be freed before the function returns.
-//   dag_type **og_graph = allocateGraphDS(og_num_vertices);
+void insertFenceAfter(Function &F, Instruction* inst) {
+  CallInst* fence_call = getFenceCall(F);
+  fence_call->insertAfter(inst);
+}
 
-//   for (Instruction *I : insts) {
-//     for (User *U : I->users()) {
-//       if (Instruction *II = dyn_cast<Instruction>(U)) {
-//         auto row = getInstructionIndex(insts, I);
-//         auto col = getInstructionIndex(insts, II);
-//         if (row == -1 || col == -1) continue;
+void insertFenceBefore(Function &F, Instruction* inst) {
+  CallInst* fence_call = getFenceCall(F);
+  fence_call->insertBefore(inst);
+}
 
-//         og_graph[row][col] = 1;
-//       }
-//     }
-//   }
 
-//   for (Instruction *I : insts) {
-//     if (isTransientInstruction(I)) {
-//       auto i = getInstructionIndex(insts, I);
-//       og_graph[0][i] = 1;
-//     } else if (isStableInstruction(I)) {
-//       auto i = getInstructionIndex(insts, I);
-//       og_graph[i][og_num_vertices - 1] = 1;
-//     }
-//   }
+bool insertFences(Function &F, SmallVector<std::pair<BladeNode*, BladeNode*>> &cutset) {
+  for (auto &edge : cutset) {
+    auto &src = edge.first;
+    auto &end = edge.second;
 
-//   printGraph(og_graph, og_num_vertices); N("");
-//   bool *visited = (bool*) calloc(og_num_vertices, sizeof(bool));
-//   printGraph(og_graph, visited, og_num_vertices); N("");
-//   free(visited);
-
-//   for (int row = 1; row < og_num_vertices - 1; row++) {
-//     int target_row = (row * 2) - 1;
-//     graph[target_row][target_row + 1] = 1; // Link X_i to X_o
-
-//     // Modify the index of all outgoing edges of the current vertex to be (index * 2) - 1.
-//     for (int col = 0; col < og_num_vertices; col++) {
-//       if (og_graph[row][col] == 1) {
-//         graph[target_row + 1][(col * 2) - 1] = 1;
-//       }
-//     }
-//   }
-
-//   // Update the source node's edges (index 0) to point to correct locations.
-//   for (int col = 0; col < og_num_vertices - 1; col++) {
-//     if (og_graph[0][col] == 1) {
-//       graph[0][(col * 2) - 1] = 1;
-//     }
-//   }
-
-//   for (Instruction *I : insts) {
-//     auto row = getInstructionIndex(insts, I);
-//     if (row != -1) {
-//       // N((row * 2) - 1 << ": " << *I);
-//       N(row << ": " << *I);
-//     }
-//   }
-
-//   freeGraph(og_graph, og_num_vertices);
-// }
-
-/// @brief Performs Breadth-First-Search on residual graph
-/// @returns whether or not target can be reached
-bool bfs(dag_type **residual_graph, int s, int t, int parent[], int num_vertices) {
-  bool *visited = (bool*) calloc(num_vertices, sizeof(bool));
-  std::queue<int> traversed_so_far;
-  traversed_so_far.push(s);
-  visited[s] = true;
-  parent[s] = -1;
-
-  while (!traversed_so_far.empty()) {
-    int current = traversed_so_far.front();
-    traversed_so_far.pop();
-
-    for (int v = 0; v < num_vertices; v++) {
-      if (visited[v]==false && residual_graph[current][v] > 0){
-        traversed_so_far.push(v);
-        parent[v] = current;
-        visited[v] = true;
-      }
+    if (isa<SourceNode>(src)) {
+      ValueDefNode* end_def_node = cast<ValueDefNode>(end);
+      insertFenceAfter(F, end_def_node->inst);
+    } else if (isa<SinkNode>(end)) {
+      InstSinkNode* source_sink_node = cast<InstSinkNode>(src);
+      insertFenceBefore(F, source_sink_node->inst);
+    } else {
+      InstructionNode* inst_end_node = cast<InstructionNode>(end);
+      insertFenceBefore(F, inst_end_node->inst);
     }
-  }
-
-  auto res = visited[t] == true;
-  free(visited);
-
-  return res;
-}
-
-/// @brief Performs Deapth-First-Search recursively on residual graph and updates
-/// visited[] array where the indices of visited allign with the IDs of instructions
-void dfs(dag_type **residual_graph, int s, bool visited[], int num_vertices) {
-  visited[s] = true;
-  for (int i = 0; i < num_vertices; i++) {
-    if (residual_graph[s][i] && !visited[i]) {
-      dfs(residual_graph, i, visited, num_vertices);
-    }
-  }
-}
-
-SmallSet<Instruction*, 16> minCut(BladeGraph &graph) {
-  SmallSet<Instruction*, 16> cutset;
-
-  std::queue<BladeNode> queue;
-  std::vector<BladeNode> preds;
-
-  return cutset;
-}
-
-/// @brief Performs a customized version of Ford Fulkerson's Max Flow Min Cut Algorithm
-/// to find the minimal cuts of the dependency graph.
-// SmallSetVector<int, 16> minCut(dag_type **graph, int source, int sink, int num_vertices) {
-//   int u, v;
-//   dag_type **residual_graph = allocateGraphDS(num_vertices);
-//   for (u = 0; u < num_vertices; u++) {
-//     for (v = 0; v < num_vertices; v++) {
-//       residual_graph[u][v] = graph[u][v];
-//     }
-//   }
-
-//   // Keep track of the parent when performing Breadth-First-Search to build the residual graph.
-//   // However, potentially unnecessary due to the fact that resulting residual graph is equivalent
-//   // to the transpose of the original graph.
-//   int *parent = (int*) calloc(num_vertices, sizeof(int));
-//   while (bfs(residual_graph, source, sink, parent, num_vertices)) {
-//     dag_type path_flow = INT_MAX;
-//     for (v = sink; v != source; v = parent[v]) {
-//       u = parent[v];
-//       path_flow = std::min(path_flow, residual_graph[u][v]);
-//     }
-
-//     // Update residual capacities and reverse the direction of the edges.
-//     for (v = sink; v != source; v=parent[v]) {
-//       u = parent[v];
-//       residual_graph[u][v] -= path_flow;
-//       residual_graph[v][u] += path_flow;
-//     }
-//   }
-
-
-//   free(parent);
-
-//   // Perform a Depth-First-Search on residual graph and keep track of which nodes are reachable.
-//   bool *visited = (bool*) calloc(num_vertices, sizeof(bool));
-//   // printGraph(residual_graph, visited, num_vertices); N("");
-//   // printGraph(graph, num_vertices); N("");
-//   dfs(residual_graph, source, visited, num_vertices);
-//   // printGraph(residual_graph, visited, num_vertices); N("");
-
-//   auto cutset_ids = SmallSetVector<int, 16>();
-
-//   // Within the following loop, i and j will represent two vertices that form a leak. We are
-//   // interested in the node that is represented by j, since it is the instruction that needs
-//   // to be protected.
-//   for (int i = 0; i < num_vertices; i++) {
-//     for (int j = 0; j < num_vertices; j++) {
-//         if (visited[i] && !visited[j] && graph[i][j]) {
-//           // Since each vertex previously turned into two, the index of an instruction at vertex
-//           // X_o corresponds to to index / 2.
-//           cutset_ids.insert(((int)j) / 2);
-//         }
-//     }
-//   }
-
-//   free(visited);
-//   freeGraph(residual_graph, num_vertices);
-
-//   return cutset_ids;
-// }
-
-
-bool insertFences(Function &F, SmallSet<Instruction*, 16> &cutset) {
-  for (Instruction *I : cutset) {
-    Function* fence_fn = Intrinsic::getDeclaration(F.getParent(), Intrinsic::x86_sse2_lfence);
-    CallInst* fence_call = CallInst::Create(fence_fn);
-    fence_call->insertAfter(I);
   }
   return true;
 }
@@ -603,7 +648,7 @@ bool insertFences(Function &F, SmallSet<Instruction*, 16> &cutset) {
 /// @brief Inserts protections right after leaky instructions given by cutset to defend
 /// against speculative leaks.
 /// @param prot see enum ProtectType
-bool insertProtections(Function &F, SmallSet<Instruction*, 16> &cutset, ProtectType prot) {
+bool insertProtections(Function &F, SmallVector<std::pair<BladeNode*, BladeNode*>> &cutset, ProtectType prot) {
   switch (prot) {
   case FENCE: return insertFences(F, cutset);
   }
@@ -618,13 +663,12 @@ void runBlade(Function &F) {
   }
 
   BladeGraph* graph = buildBladeGraph(F);
-  D(F << "\n\n");
-  D(*graph << "\n\n");
-  // auto cutset = minCut(graph);
+  // D(F << "\n\n");
+  // D(*graph << "\n\n");
+  auto cutset = graph->minCut();
+  insertProtections(F, cutset, FENCE);
 
   delete graph;
-
-  // insertProtections(F, cutset, FENCE);
 }
 
 namespace {
