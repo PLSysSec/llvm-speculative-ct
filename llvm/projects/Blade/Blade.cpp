@@ -25,10 +25,12 @@
 #include <stack>
 #include <iostream>
 
+#include <chrono>
+
 using namespace llvm;
 
-#define DEBUG_TYPE "matt"
-#define D(X) DEBUG_WITH_TYPE("matt", errs() << X)
+#define DEBUG_TYPE "blade"
+#define D(X) DEBUG_WITH_TYPE(DEBUG_TYPE, errs() << X)
 
 STATISTIC(NumCuts, "Total number of cuts resulting in a protect statement.");
 
@@ -298,7 +300,10 @@ public:
     std::vector<size_t> parents;
     parents.resize(num_nodes);
 
+    auto t1 = std::chrono::high_resolution_clock::now();
+    int iterations = 0;
     while (flowBfs(parents)) {
+      iterations++;
       bool path_flow = 1;
       size_t node_index = nodeIndex(sink_node);
       while (node_index != nodeIndex(source_node)) {
@@ -315,20 +320,37 @@ public:
         node_index = parent_index;
       }
     }
+    auto t2 = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+    if (duration > 1000) {
+      errs() << iterations << " building residual: " << duration << "\n";
+    }
 
     std::vector<bool> visited;
     visited.resize(num_nodes, false);
 
+    t1 = std::chrono::high_resolution_clock::now();
     flowDfs(nodeIndex(source_node), visited);
+    t2 = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+    if (duration > 1000) {
+      errs() << " flow dfs: " << duration << "\n";
+    }
 
     edges = original_edges;
 
+    t1 = std::chrono::high_resolution_clock::now();
     for (size_t node_index = 0; node_index < num_nodes; node_index++) {
       for (int other_index = 0; other_index < num_nodes; other_index++) {
         if (visited[node_index] && !visited[other_index] && hasEdge(node_index, other_index)) {
           cutset.push_back({nodeIndexToBladeNode(node_index), nodeIndexToBladeNode(other_index)});
         }
       }
+    }
+    t2 = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+    if (duration > 1000) {
+      errs() << " building cutset: " << duration << "\n";
     }
 
     return cutset;
@@ -407,68 +429,68 @@ public:
     // }
     // os << "\n";
 
-    // os << "digraph {" << '\n';
+    os << "digraph {" << '\n';
 
-    // os << "node[shape=rectangle];\n";
+    os << "node[shape=rectangle];\n";
 
-    // for (Instruction* from_inst : index_to_instruction) {
-    //   for (Instruction* to_inst : index_to_instruction) {
-    //     ValueDefNode fromDef = ValueDefNode(from_inst);
-    //     InstSinkNode fromSink = InstSinkNode(from_inst);
-    //     ValueDefNode toDef = ValueDefNode(to_inst);
-    //     InstSinkNode toSink = InstSinkNode(to_inst);
-    //     for (auto from : std::initializer_list<BladeNode*>{&fromDef, &fromSink}) {
-    //       for (auto to : std::initializer_list<BladeNode*>{&toDef, &toSink}) {
-    //         if (hasEdge(*from, *to)) {
-    //           os << *from << " -> " << *to << ';' << '\n';
-    //         }
-    //       }
-    //     }
-    //   }
-    // }
-    // for (Instruction* node_inst : index_to_instruction) {
-    //   ValueDefNode nodeDef = ValueDefNode(node_inst);
-    //   InstSinkNode nodeSink = InstSinkNode(node_inst);
-    //   for (auto node : std::initializer_list<BladeNode*>{&nodeDef, &nodeSink}) {
-    //     if (hasEdge(source_node, *node)) {
-    //       os << source_node << " -> " << *node << ';' << '\n';
-    //     }
-    //     if (hasEdge(sink_node, *node)) {
-    //       os << sink_node << " -> " << *node << ';' << '\n';
-    //     }
-    //     if (hasEdge(*node, source_node)) {
-    //       os << *node << " -> " << source_node << ';' << '\n';
-    //     }
-    //     if (hasEdge(*node, sink_node)) {
-    //       os << *node << " -> " << sink_node << ';' << '\n';
-    //     }
-    //   }
-    // }
-    // if (hasEdge(source_node, sink_node)) {
-    //   os << source_node << " -> " << sink_node << ';' << '\n';
-    // }
-    // if (hasEdge(sink_node, source_node)) {
-    //   os << sink_node << " -> " << source_node << ';' << '\n';
-    // }
+    for (Instruction* from_inst : index_to_instruction) {
+      for (Instruction* to_inst : index_to_instruction) {
+        ValueDefNode fromDef = ValueDefNode(from_inst);
+        InstSinkNode fromSink = InstSinkNode(from_inst);
+        ValueDefNode toDef = ValueDefNode(to_inst);
+        InstSinkNode toSink = InstSinkNode(to_inst);
+        for (auto from : std::initializer_list<BladeNode*>{&fromDef, &fromSink}) {
+          for (auto to : std::initializer_list<BladeNode*>{&toDef, &toSink}) {
+            if (hasEdge(*from, *to)) {
+              os << *from << " -> " << *to << ';' << '\n';
+            }
+          }
+        }
+      }
+    }
+    for (Instruction* node_inst : index_to_instruction) {
+      ValueDefNode nodeDef = ValueDefNode(node_inst);
+      InstSinkNode nodeSink = InstSinkNode(node_inst);
+      for (auto node : std::initializer_list<BladeNode*>{&nodeDef, &nodeSink}) {
+        if (hasEdge(source_node, *node)) {
+          os << source_node << " -> " << *node << ';' << '\n';
+        }
+        if (hasEdge(sink_node, *node)) {
+          os << sink_node << " -> " << *node << ';' << '\n';
+        }
+        if (hasEdge(*node, source_node)) {
+          os << *node << " -> " << source_node << ';' << '\n';
+        }
+        if (hasEdge(*node, sink_node)) {
+          os << *node << " -> " << sink_node << ';' << '\n';
+        }
+      }
+    }
+    if (hasEdge(source_node, sink_node)) {
+      os << source_node << " -> " << sink_node << ';' << '\n';
+    }
+    if (hasEdge(sink_node, source_node)) {
+      os << sink_node << " -> " << source_node << ';' << '\n';
+    }
 
-    // os << "node[shape=none, width=0, height=0, label=\"\"];\n";
+    os << "node[shape=none, width=0, height=0, label=\"\"];\n";
 
-    // int ii = 0;
-    // os << "{" << "rank=same; " << ii << " -> " << source_node << "[style=invis]" << "}\n";
-    // ii++;
-    // for (Instruction* inst : index_to_instruction) {
-    //   ValueDefNode defNode = ValueDefNode(inst);
-    //   InstSinkNode sinkNode = InstSinkNode(inst);
-    //   os << "{" << "rank=same; " << ii << " -> " << defNode << " -> " << sinkNode << "[style=invis]" << "}\n";
-    //   ii++;
-    // }
-    // os << "{" << "rank=same; " << ii << " -> " << sink_node << "[style=invis];" << "}\n";
-    // ii++;
-    // for (ii = 0; ii < index_to_instruction.size() + 1; ii++) {
-    //   os << ii << " -> " << ii + 1 << "[style=invis];";
-    // }
+    int ii = 0;
+    os << "{" << "rank=same; " << ii << " -> " << source_node << "[style=invis]" << "}\n";
+    ii++;
+    for (Instruction* inst : index_to_instruction) {
+      ValueDefNode defNode = ValueDefNode(inst);
+      InstSinkNode sinkNode = InstSinkNode(inst);
+      os << "{" << "rank=same; " << ii << " -> " << defNode << " -> " << sinkNode << "[style=invis]" << "}\n";
+      ii++;
+    }
+    os << "{" << "rank=same; " << ii << " -> " << sink_node << "[style=invis];" << "}\n";
+    ii++;
+    for (ii = 0; ii < index_to_instruction.size() + 1; ii++) {
+      os << ii << " -> " << ii + 1 << "[style=invis];";
+    }
 
-    // os << '}';
+    os << '}';
 
     return os;
   }
@@ -537,32 +559,13 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
     handlePointerOperationAsSink(I, I.getPointerOperand());
   }
 
-  // void visitSelectInst(SelectInst &I) {
-  // }
+  void visitSelectInst(SelectInst &I) {
+    graph.markAsSink(&I);
 
-  // void visitMemSetInst(MemSetInst &I) {
-  // }
-
-  // void visitMemSetInlineInst(MemSetInlineInst &I) {
-  // }
-
-  // void visitMemCpyInst(MemCpyInst &I) {
-  // }
-
-  // void visitMemCpyInlineInst(MemCpyInlineInst &I) {
-  // }
-
-  // void visitMemMoveInst(MemMoveInst &I) {
-  // }
-
-  // void visitMemTransferInst(MemTransferInst &I) {
-  // }
-
-  // void visitMemIntrinsic (MemIntrinsic &I) {
-  // }
-
-  // void visitIntrinsicInst(IntrinsicInst &I) {
-  // }
+    if (auto *condition_inst = dyn_cast<Instruction>(I.getCondition())) {
+      graph.addEdge(ValueDefNode(condition_inst), InstSinkNode(&I));
+    }
+  }
 
   void visitReturnInst(ReturnInst &I) {
     handleAllOperandsAsSink(I);
@@ -586,17 +589,33 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
     handleAllOperandsAsSink(I);
   }
 
-  // void visitInstruction(Instruction &I) {
-  // }
+  // TODO(matt): does it make sense to skip past fences?
+  void visitFenceInst(FenceInst &I) {
+  }
+
+  void visitInstruction(Instruction &I) {
+    if (I.mayReadOrWriteMemory()) {
+      errs() << "unknown instruction that touches memory: " << I << "\n";
+      exit(1);
+    }
+  }
 };
 
 
 BladeGraph* buildBladeGraph(Function &F) {
   BladeGraph* graph = new BladeGraph(F);
 
+  auto t1 = std::chrono::high_resolution_clock::now();
   BladeGraphInsertVisitor insertVisitor = BladeGraphInsertVisitor(*graph);
   insertVisitor.visit(F);
+  auto t2 = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+  if (duration > 1000) {
+    errs() << F.getName() << "building graph: " << duration << "\n";
+  }
 
+
+  t1 = std::chrono::high_resolution_clock::now();
   // add def-use edges
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
@@ -606,6 +625,11 @@ BladeGraph* buildBladeGraph(Function &F) {
         }
       }
     }
+  }
+  t2 = std::chrono::high_resolution_clock::now();
+  duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+  if (duration > 1000) {
+    errs() << F.getName() << "adding edges: " << duration << "\n";
   }
 
   return graph;
@@ -632,14 +656,24 @@ bool insertFences(Function &F, SmallVector<std::pair<BladeNode*, BladeNode*>> &c
     auto &end = edge.second;
 
     if (isa<SourceNode>(src)) {
-      ValueDefNode* end_def_node = cast<ValueDefNode>(end);
-      insertFenceAfter(F, end_def_node->inst);
+      Instruction* inst = cast<ValueDefNode>(end)->inst;
+      insertFenceAfter(F, inst);
     } else if (isa<SinkNode>(end)) {
-      InstSinkNode* source_sink_node = cast<InstSinkNode>(src);
-      insertFenceBefore(F, source_sink_node->inst);
+      Instruction* inst = cast<InstSinkNode>(src)->inst;
+      insertFenceBefore(F, inst);
     } else {
-      InstructionNode* inst_end_node = cast<InstructionNode>(end);
-      insertFenceBefore(F, inst_end_node->inst);
+      Instruction* inst = cast<InstructionNode>(end)->inst;
+      // find the end of a sequence of phi nodes. I believe this is valid
+      if (isa<PHINode>(inst)) {
+        while (isa<PHINode>(inst)) {
+          inst = inst->getNextNonDebugInstruction();
+          if (inst == nullptr) {
+            errs() << "could not find end of phi node sequence";
+            exit(1);
+          }
+        }
+      }
+      insertFenceBefore(F, inst);
     }
   }
   return true;
@@ -665,8 +699,21 @@ void runBlade(Function &F) {
   BladeGraph* graph = buildBladeGraph(F);
   // D(F << "\n\n");
   // D(*graph << "\n\n");
+  auto t1 = std::chrono::high_resolution_clock::now();
   auto cutset = graph->minCut();
+  auto t2 = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+  if (duration > 1000) {
+    errs() << F.getName() << " min cut: " << duration << "\n";
+  }
+
+  t1 = std::chrono::high_resolution_clock::now();
   insertProtections(F, cutset, FENCE);
+  t2 = std::chrono::high_resolution_clock::now();
+  duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+  if (duration > 1000) {
+    errs() << F.getName() << "protections: " << duration << "\n";
+  }
 
   delete graph;
 }
