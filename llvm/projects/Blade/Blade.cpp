@@ -16,7 +16,6 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/DirectedGraph.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -173,13 +172,24 @@ public:
   }
 };
 
+struct BladeEdge {
+public:
+  int flow;
+  int capacity;
+
+  BladeEdge()
+    : flow(0), capacity(0) {}
+
+  BladeEdge(int capacity)
+    : flow(0), capacity(capacity) {}
+};
+
 class BladeGraph {
 public:
-  using edge_iterator = typename std::vector<bool>::iterator;
-  using edge_ref = typename std::vector<bool>::iterator::reference;
+  using edge_iterator = typename std::vector<BladeEdge>::iterator;
 
 private:
-  std::vector<bool> edges;
+  std::vector<BladeEdge> edges;
   ValueMap<Instruction*, size_t> instruction_to_index;
   std::vector<Instruction*> index_to_instruction;
 
@@ -196,7 +206,7 @@ public:
       }
     }
     num_nodes = num_insts * 2 + 2;
-    edges.resize(num_nodes * num_nodes, false);
+    edges.resize(num_nodes * num_nodes, BladeEdge());
     source_node = SourceNode(num_nodes - 2);
     sink_node = SinkNode(num_nodes - 1);
     index_to_instruction.reserve(num_insts);
@@ -252,24 +262,24 @@ public:
     return edges.begin() + (node_index * num_nodes) + num_nodes;
   }
 
-  edge_ref getEdge(const BladeNode &from, const BladeNode &to) {
+  BladeEdge &getEdge(const BladeNode &from, const BladeNode &to) {
     return edgesBegin(from)[nodeIndex(to)];
   }
 
-  edge_ref getEdge(size_t from_index, size_t to_index) {
+  BladeEdge &getEdge(size_t from_index, size_t to_index) {
     return edgesBegin(from_index)[to_index];
   }
 
   bool hasEdge(const BladeNode &from, const BladeNode &to) {
-    return getEdge(from, to);
+    return getEdge(from, to).capacity;
   }
 
   bool hasEdge(size_t from_index, size_t to_index) {
-    return getEdge(from_index, to_index);
+    return getEdge(from_index, to_index).capacity;
   }
 
   void addEdge(const BladeNode &from, const BladeNode &to) {
-    getEdge(from, to) = 1;
+    getEdge(from, to) = BladeEdge(1);
   }
 
   void markAsSource(Instruction* inst) {
@@ -292,54 +302,189 @@ public:
     D("\n\n");
   }
 
+  void pushRelabelPush(size_t source_index, size_t target_index, std::vector<int> &excess_flow) {
+    BladeEdge &edge = getEdge(source_index, target_index);
+    int flow = std::min(excess_flow[source_index], edge.capacity - edge.flow);
+    edge.flow += flow;
+    getEdge(target_index, source_index).flow -= flow;
+    excess_flow[source_index] -= flow;
+    excess_flow[target_index] += flow;
+  }
+
+  void pushRelabelRelabel(size_t node_index, std::vector<int> &heights) {
+    int min_height = INT_MAX;
+    for (int other_index = 0; other_index < num_nodes; other_index++) {
+      BladeEdge &edge = getEdge(node_index, other_index);
+      if (edge.capacity - edge.flow > 0) {
+        min_height = std::min(min_height, heights[other_index]);
+        heights[node_index] = min_height + 1;
+      }
+    }
+  }
+
+  void pushRelabelDischarge(size_t node_index, std::vector<int> &heights, std::vector<int> &excess_flow, std::vector<int> &seen) {
+    while (excess_flow[node_index] > 0) {
+      if (seen[node_index] < num_nodes) {
+        size_t other_index = seen[node_index];
+        BladeEdge &edge = getEdge(node_index, other_index);
+        if ((edge.capacity - edge.flow > 0) && (heights[node_index] > heights[other_index])) {
+          pushRelabelPush(node_index, other_index, excess_flow);
+          debugPushRelabel(heights, excess_flow);
+        } else {
+          seen[node_index] += 1;
+        }
+      } else {
+        pushRelabelRelabel(node_index, heights);
+        debugPushRelabel(heights, excess_flow);
+        seen[node_index] = 0;
+      }
+    }
+  }
+
+  // void pushRelabelPreflow(std::vector<int> &heights, std::vector<int> &excess_flow) {
+  //   heights.resize(num_nodes, 0);
+  //   heights[nodeIndex(source_node)] = num_nodes;
+
+  //   excess_flow.resize(num_nodes, 0);
+
+  //   for (size_t node_index = 0; node_index < num_nodes; node_index++) {
+  //     BladeEdge &edge = getEdge(nodeIndex(source_node), node_index);
+
+  //     if (edge.flow == edge.capacity) { // this also captures skipping if an edge doesn't exist
+  //       continue;
+  //     }
+
+  //     int flow = std::min(edge.capacity - edge.flow, excess_flow[nodeIndex(source_node)]);
+
+  //     edge.flow += flow;
+  //     getEdge(node_index, nodeIndex(source_node)).flow -= flow;
+  //     excess_flow[nodeIndex(source_node)] -= flow;
+  //     excess_flow[node_index] += flow;
+  //   }
+  // }
+
+  // size_t findOverflowNode(std::vector<int> &excess_flow) {
+  //   for (size_t ii = 0; ii < num_nodes; ii++) {
+  //     if (excess_flow[ii] > 0) {
+  //       return ii;
+  //     }
+  //   }
+
+  //   return -1;
+  // }
+
+  // bool pushRelabelPush(size_t node_index, std::vector<int> &heights, std::vector<int> &excess_flow) {
+  //   for (size_t adjacent_index = 0; adjacent_index < num_nodes; adjacent_index++) {
+  //     BladeEdge &edge = getEdge(node_index, adjacent_index);
+  //     if (edge.flow == edge.capacity) { // this also captures skipping if an edge doesn't exist
+  //       continue;
+  //     }
+
+  //     if (heights[node_index] > heights[adjacent_index]) {
+  //       int flow = std::min(edge.capacity - edge.flow, excess_flow[node_index]);
+
+  //       edge.flow += flow;
+  //       getEdge(adjacent_index, node_index).flow -= flow;
+  //       excess_flow[node_index] -= flow;
+  //       excess_flow[adjacent_index] += flow;
+
+  //       return true;
+  //     }
+  //   }
+  //   return false;
+  // }
+
+  // void pushRelabelRelabel(size_t node_index, std::vector<int> &heights) {
+  //   int min_height = INT_MAX;
+
+  //   for (size_t other_index = 0; other_index < num_nodes; other_index++) {
+  //     auto edge = getEdge(node_index, other_index);
+  //     if (edge.flow == edge.capacity) { // this also captures skipping if an edge doesn't exist
+  //       continue;
+  //     }
+
+  //     if (heights[other_index] < min_height) {
+  //       min_height = heights[other_index];
+  //       heights[node_index] = min_height + 1;
+  //     }
+  //   }
+  // }
+
   SmallVector<std::pair<BladeNode*, BladeNode*>> minCut() {
     SmallVector<std::pair<BladeNode*, BladeNode*>> cutset;
 
-    std::vector<bool> original_edges = edges;
+    auto original_edges = edges;
 
-    std::vector<size_t> parents;
-    parents.resize(num_nodes);
+    std::vector<int> heights;
+    heights.resize(num_nodes, 0);
+    std::vector<int> excess_flow;
+    excess_flow.resize(num_nodes, 0);
 
-    auto t1 = std::chrono::high_resolution_clock::now();
-    int iterations = 0;
-    while (flowBfs(parents)) {
-      iterations++;
-      bool path_flow = 1;
-      size_t node_index = nodeIndex(sink_node);
-      while (node_index != nodeIndex(source_node)) {
-        size_t parent_index = parents[node_index];
-        path_flow = std::min(path_flow, hasEdge(parent_index, node_index)); // NOTE: not strictly necessary since weights are boolean but easy future proofing
-        node_index = parent_index;
-      }
+    size_t source_index = nodeIndex(source_node);
 
-      node_index = nodeIndex(sink_node);
-      while (node_index != nodeIndex(source_node)) {
-        size_t parent_index = parents[node_index];
-        getEdge(parent_index, node_index) = getEdge(parent_index, node_index) - path_flow;
-        getEdge(node_index, parent_index) = getEdge(node_index, parent_index) + path_flow;
-        node_index = parent_index;
+    std::list<size_t> todo_list;
+    for (size_t node_index; node_index < num_nodes; node_index++) {
+      if (node_index != source_index && node_index != nodeIndex(sink_node)) {
+        todo_list.push_back(node_index);
       }
     }
-    auto t2 = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-    if (duration > 1000) {
-      errs() << iterations << " building residual: " << duration << "\n";
+
+    debugPushRelabel(heights, excess_flow);
+
+    heights[source_index] = num_nodes;
+    for (size_t other_index; other_index < num_nodes; other_index++) {
+      BladeEdge &edge = getEdge(source_index, other_index);
+      int flow = edge.capacity - edge.flow;
+      edge.flow += flow;
+      getEdge(other_index, source_index).flow -= flow;
+      excess_flow[other_index] += flow;
     }
+
+    debugPushRelabel(heights, excess_flow);
+
+    std::vector<int> seen;
+    seen.resize(num_nodes - 2, 0);
+
+    auto place = todo_list.begin();
+    while (place != todo_list.end()) {
+      size_t node_index = *place;
+      int old_height = heights[node_index];
+      pushRelabelDischarge(node_index, heights, excess_flow, seen);
+      if (heights[node_index] > old_height) {
+        todo_list.erase(place);
+        todo_list.push_front(node_index);
+        place = todo_list.begin();
+      } else {
+        place++;
+      }
+    }
+
+
+    // pushRelabelPreflow(heights, excess_flow);
+    // debugPushRelabel(0, heights, excess_flow);
+
+    // int iterations = 0;
+    // auto overflow_node_index = findOverflowNode(excess_flow);
+    // while (overflow_node_index != -1) {
+    //   iterations++;
+    //   // errs() << "overflow_node_index = " << overflow_node_index << "\n";
+    //   if (!pushRelabelPush(overflow_node_index, heights, excess_flow)) {
+    //     // errs() << "relabeling\n";
+    //     pushRelabelRelabel(overflow_node_index, heights);
+    //   } else {
+    //     // errs() << "pushing\n";
+    //   }
+    //   debugPushRelabel(iterations, heights, excess_flow);
+    //   overflow_node_index = findOverflowNode(excess_flow);
+    // }
 
     std::vector<bool> visited;
     visited.resize(num_nodes, false);
 
-    t1 = std::chrono::high_resolution_clock::now();
     flowDfs(nodeIndex(source_node), visited);
-    t2 = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-    if (duration > 1000) {
-      errs() << " flow dfs: " << duration << "\n";
-    }
 
     edges = original_edges;
 
-    t1 = std::chrono::high_resolution_clock::now();
     for (size_t node_index = 0; node_index < num_nodes; node_index++) {
       for (int other_index = 0; other_index < num_nodes; other_index++) {
         if (visited[node_index] && !visited[other_index] && hasEdge(node_index, other_index)) {
@@ -347,11 +492,70 @@ public:
         }
       }
     }
-    t2 = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-    if (duration > 1000) {
-      errs() << " building cutset: " << duration << "\n";
+
+    return cutset;
+  }
+
+  SmallVector<std::pair<BladeNode*, BladeNode*>> minCutEdmondsKarp() {
+    SmallVector<std::pair<BladeNode*, BladeNode*>> cutset;
+
+    auto original_edges = edges;
+
+    std::vector<size_t> parents;
+    parents.resize(num_nodes);
+
+    // auto t1 = std::chrono::high_resolution_clock::now();
+    // int iterations = 0;
+    while (flowBfs(parents)) {
+      // iterations++;
+      int path_flow = 1;
+      size_t node_index = nodeIndex(sink_node);
+      while (node_index != nodeIndex(source_node)) {
+        size_t parent_index = parents[node_index];
+        path_flow = std::min(path_flow, getEdge(parent_index, node_index).flow);
+        node_index = parent_index;
+      }
+
+      node_index = nodeIndex(sink_node);
+      while (node_index != nodeIndex(source_node)) {
+        size_t parent_index = parents[node_index];
+        getEdge(parent_index, node_index).flow = getEdge(parent_index, node_index).flow - path_flow;
+        getEdge(node_index, parent_index).flow = getEdge(node_index, parent_index).flow + path_flow;
+        node_index = parent_index;
+      }
     }
+    // auto t2 = std::chrono::high_resolution_clock::now();
+    // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+    // if (duration > 1000) {
+    //   errs() << iterations << " building residual: " << duration << "\n";
+    // }
+
+    std::vector<bool> visited;
+    visited.resize(num_nodes, false);
+
+    // t1 = std::chrono::high_resolution_clock::now();
+    flowDfs(nodeIndex(source_node), visited);
+    // t2 = std::chrono::high_resolution_clock::now();
+    // duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+    // if (duration > 1000) {
+    //   errs() << " flow dfs: " << duration << "\n";
+    // }
+
+    edges = original_edges;
+
+    // t1 = std::chrono::high_resolution_clock::now();
+    for (size_t node_index = 0; node_index < num_nodes; node_index++) {
+      for (int other_index = 0; other_index < num_nodes; other_index++) {
+        if (visited[node_index] && !visited[other_index] && hasEdge(node_index, other_index)) {
+          cutset.push_back({nodeIndexToBladeNode(node_index), nodeIndexToBladeNode(other_index)});
+        }
+      }
+    }
+    // t2 = std::chrono::high_resolution_clock::now();
+    // duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+    // if (duration > 1000) {
+    //   errs() << " building cutset: " << duration << "\n";
+    // }
 
     return cutset;
   }
@@ -399,6 +603,41 @@ public:
     } else {
       D(*nodeIndexToInstruction(node_index));
     }
+  }
+
+  void debugPushRelabelIndex(size_t node_index) {
+    if (node_index == nodeIndex(source_node)) {
+      errs() << "source";
+    } else if (node_index == nodeIndex(sink_node)) {
+      errs() << "sink";
+    } else {
+      errs() << node_index;
+    }
+  }
+
+  void debugPushRelabel(std::vector<int> &heights, std::vector<int> &excess_flow) {
+    // errs() << "digraph " << " {" << "\n";
+
+    for (size_t source_index = 0; source_index < num_nodes; source_index++) {
+      errs() << source_index << "["
+             << "label = " << '"';
+      debugPushRelabelIndex(source_index);
+      errs() << ": excess = " << excess_flow[source_index] << ", " << "height = " << heights[source_index] << '"'
+             << "];\n";
+      for (size_t target_index = 0; target_index < num_nodes; target_index++) {
+        auto edge = getEdge(source_index, target_index);
+        if (edge.capacity || edge.flow) {
+          errs() << source_index << " -> " << target_index
+                 << "["
+                 << "label = " << '"' << edge.flow << "/" << edge.capacity << '"'
+                 << "]"
+                 << ";\n";
+        }
+      }
+    }
+
+    errs() << "\n\n";
+    // errs() << "}\n\n";
   }
 
   raw_ostream& outputGraph(raw_ostream& os) {
@@ -605,17 +844,17 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
 BladeGraph* buildBladeGraph(Function &F) {
   BladeGraph* graph = new BladeGraph(F);
 
-  auto t1 = std::chrono::high_resolution_clock::now();
+  // auto t1 = std::chrono::high_resolution_clock::now();
   BladeGraphInsertVisitor insertVisitor = BladeGraphInsertVisitor(*graph);
   insertVisitor.visit(F);
-  auto t2 = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-  if (duration > 1000) {
-    errs() << F.getName() << "building graph: " << duration << "\n";
-  }
+  // auto t2 = std::chrono::high_resolution_clock::now();
+  // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+  // if (duration > 1000) {
+  //   errs() << F.getName() << "building graph: " << duration << "\n";
+  // }
 
 
-  t1 = std::chrono::high_resolution_clock::now();
+  // t1 = std::chrono::high_resolution_clock::now();
   // add def-use edges
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
@@ -626,11 +865,11 @@ BladeGraph* buildBladeGraph(Function &F) {
       }
     }
   }
-  t2 = std::chrono::high_resolution_clock::now();
-  duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-  if (duration > 1000) {
-    errs() << F.getName() << "adding edges: " << duration << "\n";
-  }
+  // t2 = std::chrono::high_resolution_clock::now();
+  // duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+  // if (duration > 1000) {
+  //   errs() << F.getName() << "adding edges: " << duration << "\n";
+  // }
 
   return graph;
 }
@@ -707,13 +946,18 @@ void runBlade(Function &F) {
     errs() << F.getName() << " min cut: " << duration << "\n";
   }
 
-  t1 = std::chrono::high_resolution_clock::now();
-  insertProtections(F, cutset, FENCE);
-  t2 = std::chrono::high_resolution_clock::now();
-  duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-  if (duration > 1000) {
-    errs() << F.getName() << "protections: " << duration << "\n";
+  D("cutset" << "\n");
+  for (auto cut : cutset) {
+    D(cut.first << " -> " << cut.second << "\n");
   }
+
+  // t1 = std::chrono::high_resolution_clock::now();
+  insertProtections(F, cutset, FENCE);
+  // t2 = std::chrono::high_resolution_clock::now();
+  // duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+  // if (duration > 1000) {
+  //   errs() << F.getName() << "protections: " << duration << "\n";
+  // }
 
   delete graph;
 }
