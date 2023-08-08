@@ -20,6 +20,11 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/Support/Casting.h"
+#include <boost/graph/graph_traits.hpp>
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/boykov_kolmogorov_max_flow.hpp>
+#include <boost/graph/filtered_graph.hpp>
+#include <boost/graph/depth_first_search.hpp>
 #include <queue>
 #include <stack>
 #include <iostream>
@@ -33,579 +38,127 @@ using namespace llvm;
 
 STATISTIC(NumCuts, "Total number of cuts resulting in a protect statement.");
 
-class BladeNode {
-public:
-  /// Discriminator for LLVM-style RTTI (dyn_cast<> et al.)
-  enum BladeNodeKind {
-    BNK_SourceNode,
-    BNK_SinkNode,
-    BNK_InstructionNode,
-    BNK_ValueDefNode,
-    BNK_InstSinkNode
-  };
+struct BladeNode;
+struct BladeEdge;
 
-public:
-  virtual size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const = 0;
-  virtual raw_ostream& outputNode(raw_ostream& os) const = 0;
-  friend raw_ostream& operator<<(raw_ostream& os, BladeNode const &node) {
-    return node.outputNode(os);
-  }
+typedef boost::adjacency_list<boost::setS, boost::vecS, boost::bidirectionalS, BladeNode, BladeEdge> Graph;
+typedef typename boost::graph_traits<Graph>::vertex_descriptor Vertex;
+typedef typename boost::graph_traits<Graph>::edge_descriptor Edge;
+typedef typename boost::graph_traits<Graph>::out_edge_iterator out_edge_iterator;
 
-private:
-  const BladeNodeKind kind;
-
-public:
-  BladeNodeKind getKind() const { return kind; }
-  BladeNode(BladeNodeKind kind) : kind(kind) {}
-
-  static bool classof(const BladeNode* node);
+enum NodeType {
+  DEFAULTNODE,
+  SOURCENODE,
+  SINKNODE,
+  VALUEDEFNODE,
+  INSTSINKNODE
 };
 
-class SourceNode : public BladeNode {
-public:
-  size_t source_index;
-
-  SourceNode(size_t source_index)
-    : BladeNode(BNK_SourceNode), source_index(source_index) {}
-
-  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
-    return source_index;
-  }
-
-  SourceNode& operator=(SourceNode&& other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-
-    source_index = other.source_index;
-    return *this;
-  }
-
-  static bool classof(const BladeNode *node) {
-    return node->getKind() == BNK_SourceNode;
-  }
-
-  raw_ostream& outputNode(raw_ostream& os) const {
-    return os << "source";
-  }
-};
-
-class SinkNode : public BladeNode {
-public:
-  size_t sink_index;
-
-  SinkNode(size_t sink_index)
-    : BladeNode(BNK_SinkNode), sink_index(sink_index) {}
-
-  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
-    return sink_index;
-  }
-
-  SinkNode& operator=(SinkNode&& other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-
-    sink_index = other.sink_index;
-    return *this;
-  }
-
-  static bool classof(const BladeNode *node) {
-    return node->getKind() == BNK_SinkNode;
-  }
-
-  raw_ostream& outputNode(raw_ostream& os) const {
-    return os << "sink";
-  }
-};
-
-class InstructionNode : public BladeNode {
-public:
+struct BladeNode {
+  NodeType node_type;
   Instruction* inst;
 
-  InstructionNode(BladeNodeKind kind, Instruction* inst)
-    : BladeNode(kind), inst(inst) {}
+  BladeNode()
+    : node_type(DEFAULTNODE), inst(nullptr) {}
 
-  static bool classof(const BladeNode *node) {
-    return node->getKind() >= BNK_SinkNode
-      && node->getKind() <= BNK_InstSinkNode;
-  }
-};
+  BladeNode(NodeType node_type, Instruction* inst)
+    : node_type(node_type), inst(inst) {}
 
-class ValueDefNode : public InstructionNode {
-public:
-  ValueDefNode(Instruction* inst)
-    : InstructionNode(BNK_ValueDefNode, inst) {}
-
-  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
-    return instruction_to_index[inst] * 2;
-  }
-
-  static bool classof(const BladeNode *node) {
-    return node->getKind() == BNK_ValueDefNode;
-  }
-
-  raw_ostream& outputNode(raw_ostream& os) const {
-    return os << '"' << "defn: " << *inst << '"';
-  }
-};
-
-class InstSinkNode : public InstructionNode {
-public:
-  InstSinkNode(Instruction* inst)
-    : InstructionNode(BNK_InstSinkNode, inst) {}
-
-  size_t index(ValueMap<Instruction*, size_t> &instruction_to_index) const {
-    return instruction_to_index[inst] * 2 + 1;
-  }
-
-  static bool classof(const BladeNode *node) {
-    return node->getKind() == BNK_InstSinkNode;
-  }
-
-  raw_ostream& outputNode(raw_ostream& os) const {
-    return os << '"' << "sink: " << *inst << '"';
-  }
-};
-
-
-class Graph {
-public:
-  using Edge = int;
-  using edge_iterator = typename std::vector<Edge>::iterator;
-
-protected:
-  std::vector<Edge> edges;
-
-public:
-  size_t num_nodes;
-
-  Graph() {}
-
-  Graph(const Graph &graph) {
-    num_nodes = graph.num_nodes;
-    std::copy(graph.edges.begin(), graph.edges.end(), std::back_inserter(edges));
-  }
-
-  Graph(size_t num_nodes, Edge init_edge)
-    : num_nodes(num_nodes)
-  {
-    edges.resize(num_nodes * num_nodes, init_edge);
-  }
-
-  edge_iterator edgesBegin(size_t node_index) {
-    return edges.begin() + (node_index * num_nodes);
-  }
-
-  edge_iterator edgesEnd(size_t node_index) {
-    return edges.begin() + (node_index * num_nodes) + num_nodes;
-  }
-
-  Edge &getEdge(size_t from_index, size_t to_index) {
-    return edgesBegin(from_index)[to_index];
-  }
-
-  bool hasEdge(size_t from_index, size_t to_index) {
-    return getEdge(from_index, to_index) > 0;
-  }
-
-  DenseSet<size_t> reachable(size_t from) {
-    DenseSet<size_t> reachable_set;
-    reachableDFS(from, reachable_set);
-    return reachable_set;
-  }
-
-  void reachableDFS(size_t from, DenseSet<size_t> &reachable_set) {
-    reachable_set.insert(from);
-    for (size_t node = 0; node < num_nodes; node++) {
-      if (!reachable_set.contains(node) && hasEdge(from, node)) {
-        reachableDFS(node, reachable_set);
-      }
+  friend raw_ostream& operator<<(raw_ostream& os, BladeNode const &node) {
+    switch (node.node_type) {
+    case SOURCENODE:
+      return os << "source";
+    case SINKNODE:
+      return os << "sink";
+    case VALUEDEFNODE:
+      return os << "value: " << *(node.inst);
+    case INSTSINKNODE:
+      return os << "sink: " << *(node.inst);
+    case DEFAULTNODE:
+      return os;
+    default:
+      return os;
     }
   }
-
-  friend raw_ostream& operator<<(raw_ostream& os, Graph &graph) {
-    return graph.outputGraph(os);
-  }
-
-  raw_ostream &outputGraph(raw_ostream& os) {
-    os << "digraph " << " {" << "\n";
-
-    for (size_t source = 0; source < num_nodes; source++) {
-      for (size_t target = 0; target < num_nodes; target++) {
-        if (hasEdge(source, target)) {
-          os << source << " -> " << target << ";" << "\n";
-        }
-      }
-    }
-
-    os << "}";
-    return os;
-  }
 };
 
-class MinCut {
-public:
-  virtual SmallVector<std::pair<size_t, size_t>> minCut() = 0;
+struct BladeEdge {
+  int capacity;
+  int residual_capacity;
+  Edge reverse_edge;
+
+  BladeEdge(int capacity)
+    : capacity(capacity) {}
 };
 
-class MinCutEdmondsKarp : public MinCut {
+const BladeNode SourceNode() {
+  return BladeNode(SOURCENODE, nullptr);
+}
+
+const BladeNode SinkNode() {
+  return BladeNode(SINKNODE, nullptr);
+}
+
+BladeNode ValueDefNode(Instruction* inst) {
+  return BladeNode(VALUEDEFNODE, inst);
+}
+
+BladeNode InstSinkNode(Instruction* inst) {
+  return BladeNode(INSTSINKNODE, inst);
+}
+
+// typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::bidirectionalS, BladeNode, BladeEdge> Graph;
+// typedef typename boost::graph_traits<Graph>::vertex_descriptor Vertex;
+// typedef typename boost::graph_traits<Graph>::edge_descriptor Edge;
+// typedef typename boost::graph_traits<Graph>::out_edge_iterator out_edge_iterator;
+
+class BladeGraph {
 private:
-  Graph &g;
-  size_t source;
-  size_t sink;
+  using Vertex = typename boost::graph_traits<Graph>::vertex_descriptor;
 
-  Graph residual;
+  Graph graph;
+  ValueMap<Instruction*, std::pair<Vertex, Vertex>> instruction_to_vertex; // ValueDefNode, InstSinkNode
 
-public:
-  MinCutEdmondsKarp(Graph &g, size_t source, size_t sink)
-    : g(g), source(source), sink(sink) {}
+  Vertex source_vertex;
+  Vertex sink_vertex;
+  const BladeNode source_node = SourceNode();
+  const BladeNode sink_node = SinkNode();
 
-  SmallVector<std::pair<size_t, size_t>> minCut() {
-    residual = Graph(g);
-
-    std::vector<size_t> parents;
-    parents.resize(g.num_nodes);
-
-    while (flowBfs(parents)) {
-      int path_flow = 1; // TODO(matt): did I special case this?
-      size_t node = sink;
-      while (node != source) {
-        size_t parent = parents[node];
-        path_flow = std::min(path_flow, residual.getEdge(parent, node));
-        node = parent;
-      }
-
-      node = sink;
-      while (node != source) {
-        size_t parent = parents[node];
-        residual.getEdge(parent, node) -= path_flow;
-        residual.getEdge(node, parent) += path_flow;
-        node = parent;
-      }
-    }
-
-    // errs() << residual << "\n\n";
-
-    auto reachable = residual.reachable(source);
-    SmallVector<std::pair<size_t, size_t>> cutset;
-    for (size_t node = 0; node < residual.num_nodes; node++) {
-      for (int other = 0; other < residual.num_nodes; other++) {
-        if (reachable.contains(node) && !reachable.contains(other) && g.hasEdge(node, other)) {
-          cutset.push_back({node, other});
-        }
-      }
-    }
-
-    return cutset;
-  }
-
-  bool flowBfs(std::vector<size_t> &parents) {
-    std::vector<bool> visited;
-    visited.resize(residual.num_nodes, false);
-    std::queue<size_t> traversed;
-
-    traversed.push(source);
-    visited[source] = true;
-
-    while (!traversed.empty()) {
-      size_t current = traversed.front();
-      traversed.pop();
-
-      for (int neighbor = 0; neighbor < residual.num_nodes; neighbor++) {
-        if (!visited[neighbor] && residual.hasEdge(current, neighbor)) {
-          traversed.push(neighbor);
-          parents[neighbor] = current;
-          visited[neighbor] = true;
-        }
-      }
-    }
-
-    return visited[sink];
-  }
-};
-
-class MinCutPushRelabel : public MinCut {
-private:
-  Graph &g;
-  size_t source;
-  size_t sink;
-
-  Graph residual;
-  std::vector<int> heights;
-  std::vector<int> excess_flow;
-  std::vector<int> seen;
-
-  std::vector<size_t> relevant_nodes;
-
-public:
-  MinCutPushRelabel(Graph &g, size_t source, size_t sink)
-    : g(g), source(source), sink(sink) {}
-
-  void preflow() {
-    heights.resize(g.num_nodes, 0);
-    excess_flow.resize(g.num_nodes, 0);
-    residual = Graph(g);
-
-    // errs() << *this << "\n\n";
-
-    for (size_t from = 0; from < g.num_nodes; from++) {
-      for (size_t to = 0; to < g.num_nodes; to++) {
-        if (g.hasEdge(from, to) || g.hasEdge(to, from)) {
-          relevant_nodes.push_back(from);
-          break;
-        }
-      }
-    }
-
-    heights[source] = relevant_nodes.size();
-
-    for (auto other : relevant_nodes) {
-      int flow = g.getEdge(source, other);
-      residual.getEdge(other, source) = flow;
-      residual.getEdge(source, other) = 0;
-      excess_flow[other] += flow;
-    }
-  }
-
-  void discharge(size_t node) {
-    // while (excess_flow[node] > 0) {
-    //   if (seen[node] < residual.num_nodes) {
-    //     size_t other = seen[node];
-    //     Graph::Edge &edge = residual.getEdge(node, other);
-    //     if ((edge > 0) && (heights[node] > heights[other])) {
-    //       push(node, other);
-    //     } else {
-    //       seen[node] += 1;
-    //     }
-    //   } else {
-    //     relabel(node);
-    //     seen[node] = 0;
-    //   }
-    // }
-  }
-
-  void push(size_t from, size_t to) {
-    Graph::Edge &edge = residual.getEdge(from, to);
-    int flow = std::min(excess_flow[from], edge);
-    edge -= flow;
-    residual.getEdge(to, from) += flow;
-    excess_flow[from] -= flow;
-    excess_flow[to] += flow;
-    // errs() << *this << "\n\n";
-  }
-
-  void relabel(size_t node) {
-    int min_height = INT_MAX;
-    for (auto other : relevant_nodes) {
-      Graph::Edge &edge = residual.getEdge(node, other);
-      if (edge > 0) {
-        min_height = std::min(min_height, heights[other]);
-        heights[node] = min_height + 1;
-      }
-    }
-    // errs() << *this << "\n\n";
-  }
-
-  bool test_discharge() {
-    std::vector<size_t> todo_list;
-    for (auto node : relevant_nodes) {
-      if (node != source && node != sink) {
-        todo_list.push_back(node);
-      }
-    }
-    for (auto node : todo_list) {
-      if (excess_flow[node] > 0) {
-        for (auto other : relevant_nodes) {
-          if ((heights[node] == heights[other] + 1) && residual.hasEdge(node, other)) {
-            // errs() << "labelloc=" << '"' << "t" << '"' << ";" << "\n";
-            // errs() << "label=" << '"' << "pushing " << node << " -> " << other << '"' << ";" << "\n";
-            push(node, other);
-            return true;
-          }
-        }
-      }
-    }
-    for (auto node : todo_list) {
-      if (excess_flow[node] > 0) {
-        for (auto other : relevant_nodes) {
-          if (residual.hasEdge(node, other)) {
-            // errs() << "labelloc=" << '"' << "t" << '"' << ";" << "\n";
-            // errs() << "label=" << '"' << "relabeling " << node << '"' << ";" << "\n";
-            relabel(node);
-            return true;
-          }
-        }
-      }
-    }
-    return false;
-  }
-
-  SmallVector<std::pair<size_t, size_t>> minCut() {
-    preflow();
-    // errs() << *this << "\n\n";
-
-    // std::list<size_t> todo_list;
-    // for (size_t node = 0; node < residual.num_nodes; node++) {
-    //   if (node != source && node != sink) {
-    //     todo_list.push_back(node);
-    //   }
-    // }
-    // seen.resize(residual.num_nodes - 2, 0);
-
-    while (true) {
-      if (!test_discharge()) {
-        break;
-      }
-    }
-
-    // auto place = todo_list.begin();
-    // while (place != todo_list.end()) {
-    //   size_t node = *place;
-    //   int old_height = heights[node];
-    //   discharge(node);
-    //   if (heights[node] > old_height) {
-    //     todo_list.erase(place);
-    //     todo_list.push_front(node);
-    //     place = todo_list.begin();
-    //   } else {
-    //     place++;
-    //   }
-    // }
-
-    errs() << residual << "\n\n";
-
-    auto reachable = residual.reachable(source);
-    SmallVector<std::pair<size_t, size_t>> cutset;
-    for (auto node : relevant_nodes) {
-      for (auto other : relevant_nodes) {
-        if (reachable.contains(node) && !reachable.contains(other) && g.hasEdge(node, other)) {
-          cutset.push_back({node, other});
-        }
-      }
-    }
-
-    return cutset;
-  }
-
-  void debugNode(raw_ostream &os, size_t node) {
-    if (node == source) {
-      os << "source";
-    } else if (node == sink) {
-      os << "sink";
-    } else {
-      os << node;
-    }
-  }
-
-  friend raw_ostream& operator<<(raw_ostream& os, MinCutPushRelabel &cutter) {
-    // os << "digraph " << " {" << "\n";
-
-    for (size_t from = 0; from < cutter.residual.num_nodes; from++) {
-      bool has_edge = false;
-      for (size_t other = 0; other < cutter.residual.num_nodes; other++) {
-        if (cutter.g.hasEdge(from, other) || cutter.g.hasEdge(other, from)) {
-          has_edge = true;
-          break;
-        }
-      }
-      if (has_edge) {
-        os << from << "["
-          << "label = " << '"';
-        cutter.debugNode(os, from);
-        os << ": excess = " << cutter.excess_flow[from] << ", " << "height = " << cutter.heights[from] << '"'
-          << "];\n";
-      }
-      for (size_t to = 0; to < cutter.residual.num_nodes; to++) {
-        auto edge = cutter.residual.getEdge(from, to);
-        if (edge != 0) {
-          os << from << " -> " << to << ";" << "\n";
-        }
-      }
-    }
-
-    os << "\n\n";
-    // os << "}\n\n";
-
-    return os;
-  }
-};
-
-class BladeGraph : public Graph {
-private:
-  ValueMap<Instruction*, size_t> instruction_to_index;
-  std::vector<Instruction*> index_to_instruction;
-
-  SourceNode source_node = SourceNode(0);
-  SinkNode sink_node = SinkNode(0);
+  size_t edge_index = 0;
 
 public:
   BladeGraph(Function &F) {
-    size_t num_insts = 0;
     for (BasicBlock &BB : F) {
       for (Instruction &I : BB) {
-        num_insts++;
+        Vertex value_def_vertex = boost::add_vertex(ValueDefNode(&I), graph);
+        Vertex inst_sink_vertex = boost::add_vertex(InstSinkNode(&I), graph);
+        instruction_to_vertex[&I] = {value_def_vertex, inst_sink_vertex};
       }
     }
-    num_nodes = num_insts * 2 + 2;
-    edges.resize(num_nodes * num_nodes, 0);
-    source_node = SourceNode(num_nodes - 2);
-    sink_node = SinkNode(num_nodes - 1);
-    index_to_instruction.reserve(num_insts);
+    source_vertex = boost::add_vertex(source_node, graph);
+    sink_vertex = boost::add_vertex(sink_node, graph);
+  }
 
-    size_t ii = 0;
-    for (BasicBlock &BB : F) {
-      for (Instruction &I : BB) {
-        index_to_instruction.push_back(&I);
-        instruction_to_index[&I] = ii;
-        ii++;
-      }
+  Vertex nodeIndex(const BladeNode &node) {
+    switch (node.node_type) {
+    case SOURCENODE:
+      return source_vertex;
+    case SINKNODE:
+      return sink_vertex;
+    case VALUEDEFNODE:
+      return instruction_to_vertex[node.inst].first;
+    case INSTSINKNODE:
+      return instruction_to_vertex[node.inst].second;
+    case DEFAULTNODE:
+      assert(false && "should never see a default node");
+      exit(1);
+    default:
+      exit(1);
     }
   }
 
-  size_t nodeIndex(const BladeNode &node) {
-    return node.index(instruction_to_index);
-  }
-
-  edge_iterator edgesBegin(const BladeNode &node) {
-    return Graph::edgesBegin(nodeIndex(node));
-  }
-
-  edge_iterator edgesEnd(const BladeNode &node) {
-    return Graph::edgesEnd(nodeIndex(node));
-  }
-
-  Edge &getEdge(const BladeNode &from, const BladeNode &to) {
-    return Graph::getEdge(nodeIndex(from), nodeIndex(to));
-  }
-
-  bool hasEdge(const BladeNode &from, const BladeNode &to) {
-    return Graph::hasEdge(nodeIndex(from), nodeIndex(to));
-  }
-
-  void addEdge(const BladeNode &from, const BladeNode &to) {
-    getEdge(from, to) = 1;
-  }
-
-  Instruction* nodeIndexToInstruction(size_t index) {
-    return index_to_instruction[index / 2];
-  }
-
-  // TODO: this leaks memory
-  BladeNode* nodeIndexToBladeNode(size_t index) {
-    if (index == nodeIndex(source_node)) {
-      return &source_node;
-    } else if (index == nodeIndex(sink_node)) {
-      return &sink_node;
-    }
-    Instruction* inst = nodeIndexToInstruction(index);
-    if (index % 2 == 0) {
-      auto result_node = new ValueDefNode(inst);
-      return result_node;
-    } else {
-      auto result_node = new InstSinkNode(inst);
-      return result_node;
-    }
+  void addEdge(const BladeNode &source, const BladeNode &target) {
+    boost::add_edge(nodeIndex(source), nodeIndex(target), BladeEdge(1), graph);
   }
 
   void markAsSource(Instruction* inst) {
@@ -616,127 +169,110 @@ public:
     addEdge(InstSinkNode(inst), sink_node);
   }
 
-  SmallVector<std::pair<BladeNode*, BladeNode*>> minCut() {
-    MinCutPushRelabel cutter = MinCutPushRelabel(*this, nodeIndex(source_node), nodeIndex(sink_node));
-    // MinCutEdmondsKarp cutter = MinCutEdmondsKarp(*this, nodeIndex(source_node), nodeIndex(sink_node));
-    auto cutset_indices = cutter.minCut();
-
-    SmallVector<std::pair<BladeNode*, BladeNode*>> cutset;
-    for (auto indices : cutset_indices) {
-      cutset.push_back({nodeIndexToBladeNode(indices.first), nodeIndexToBladeNode(indices.second)});
+private:
+  struct PositiveResidual {
+    Graph *g;
+    PositiveResidual() {}
+    PositiveResidual(Graph *g)
+      : g(g) {}
+    bool operator()(const Edge &edge) const {
+      return (*g)[edge].residual_capacity > 0;
     }
+  };
 
-    errs() << "cutset:" << "\n";
-    for (auto cut : cutset) {
-      errs() << *(cut.first) << " -> " << *(cut.second) << "\n";
-    }
-    errs() << "\n";
-
-    return cutset;
+  template<class G>
+  DenseSet<size_t> reachable(Vertex from, G &g) {
+    DenseSet<size_t> reachable_set;
+    reachableDFS<G>(from, reachable_set);
+    return reachable_set;
   }
 
-  // TODO: protect type
-  void debugNodeIndex(size_t node_index) {
-    if (node_index == nodeIndex(source_node)) {
-      D("source");
-    } else if (node_index == nodeIndex(sink_node)) {
-      D("sink");
-    } else {
-      D(*nodeIndexToInstruction(node_index));
+  template<class G>
+  void reachableDFS(Vertex from, DenseSet<size_t> &reachable_set, G &g) {
+    size_t from_index = boost::get(boost::get(boost::vertex_index, g), from);
+    reachable_set.insert(from_index);
+
+    typename boost::graph_traits<G>::out_edge_iterator out_edge, out_end;
+    for (std::tie(out_edge, out_end) = boost::out_edges(from, g); out_edge != out_end; out_edge++) {
+      Vertex target = boost::target(*out_edge, g);
+      size_t target_index = boost::get(boost::get(boost::vertex_index, g), target);
+      if (!reachable_set.contains(target_index)) {
+        reachableDFS<G>(target, reachable_set, g);
+      }
     }
   }
 
-  raw_ostream& outputGraph(raw_ostream& os) {
-    // os << "    ";
-    // for (size_t ii = 0; ii < num_nodes; ii++) {
-    //   if (ii < 10) {
-    //     os << "0";
-    //   }
-    //   os << ii << " ";
-    // }
-    // os << "\n";
-    // for (size_t ii = 0; ii < num_nodes; ii++) {
-    //   if (ii < 10) {
-    //     os << "0";
-    //   }
-    //   os << ii << ": ";
-    //   for (size_t jj = 0; jj < num_nodes; jj++) {
-    //     os << " " << edges[ii * num_nodes + jj] << " ";
-    //   }
-    //   if (ii == nodeIndex(source_node)) {
-    //     os << "source";
-    //   } else if (ii == nodeIndex(sink_node)) {
-    //     os << "sink";
-    //   } else {
-    //     os << *nodeIndexToInstruction(ii);
-    //   }
-    //   os << "\n";
-    // }
-    // os << "\n";
+public:
+  SmallVector<std::pair<BladeNode, BladeNode>> minCut() {
+    boost::graph_traits<Graph>::edge_iterator edge, edges_end;
+    for (std::tie(edge, edges_end) = boost::edges(graph); edge != edges_end; edge++) {
+      Edge rev_edge;
+      bool has_rev_edge;
+      Vertex source = boost::source(*edge, graph);
+      Vertex target = boost::target(*edge, graph);
+      std::tie(rev_edge, has_rev_edge) = boost::edge(target, source, graph);
+      if (!has_rev_edge) {
+        rev_edge = boost::add_edge(target, source, BladeEdge(0), graph).first;
+      }
+    }
 
-    os << "digraph {" << '\n';
+    for (std::tie(edge, edges_end) = boost::edges(graph); edge != edges_end; edge++) {
+      Vertex source = boost::source(*edge, graph);
+      Vertex target = boost::target(*edge, graph);
+      Edge rev_edge = boost::edge(target, source, graph).first;
+      graph[*edge].reverse_edge = rev_edge;
+      graph[rev_edge].reverse_edge = *edge;
+    }
 
-    os << "node[shape=rectangle];\n";
+    boost::boykov_kolmogorov_max_flow(graph,
+                                      boost::get(&BladeEdge::capacity, graph),
+                                      boost::get(&BladeEdge::residual_capacity, graph),
+                                      boost::get(&BladeEdge::reverse_edge, graph),
+                                      boost::get(boost::vertex_index, graph),
+                                      source_vertex, sink_vertex);
 
-    for (Instruction* from_inst : index_to_instruction) {
-      for (Instruction* to_inst : index_to_instruction) {
-        ValueDefNode fromDef = ValueDefNode(from_inst);
-        InstSinkNode fromSink = InstSinkNode(from_inst);
-        ValueDefNode toDef = ValueDefNode(to_inst);
-        InstSinkNode toSink = InstSinkNode(to_inst);
-        for (auto from : std::initializer_list<BladeNode*>{&fromDef, &fromSink}) {
-          for (auto to : std::initializer_list<BladeNode*>{&toDef, &toSink}) {
-            if (hasEdge(*from, *to)) {
-              os << *from << " -> " << *to << ';' << '\n';
-            }
+    boost::filtered_graph<Graph, PositiveResidual> filtered_residual_graph = boost::filtered_graph(graph, PositiveResidual(&graph));
+
+    DenseSet<size_t> reachable_set;
+    reachableDFS<boost::filtered_graph<Graph, PositiveResidual>>(source_vertex, reachable_set, filtered_residual_graph);
+
+    auto vertices = boost::vertices(graph).first;
+    SmallVector<std::pair<BladeNode, BladeNode>> cutset;
+    for (size_t ii = 0; ii < boost::num_vertices(graph); ii++) {
+      if (reachable_set.contains(ii)) {
+        Vertex source = vertices[ii];
+        out_edge_iterator out_edge, out_end;
+        for (std::tie(out_edge, out_end) = boost::out_edges(source, graph); out_edge != out_end; out_edge++) {
+          Vertex target = boost::target(*out_edge, graph);
+          size_t target_index = boost::get(boost::get(boost::vertex_index, graph), target);
+          if (!reachable_set.contains(target_index) && graph[*out_edge].capacity > 0) {
+            cutset.push_back({graph[source], graph[target]});
           }
         }
       }
     }
-    for (Instruction* node_inst : index_to_instruction) {
-      ValueDefNode nodeDef = ValueDefNode(node_inst);
-      InstSinkNode nodeSink = InstSinkNode(node_inst);
-      for (auto node : std::initializer_list<BladeNode*>{&nodeDef, &nodeSink}) {
-        if (hasEdge(source_node, *node)) {
-          os << source_node << " -> " << *node << ';' << '\n';
-        }
-        if (hasEdge(sink_node, *node)) {
-          os << sink_node << " -> " << *node << ';' << '\n';
-        }
-        if (hasEdge(*node, source_node)) {
-          os << *node << " -> " << source_node << ';' << '\n';
-        }
-        if (hasEdge(*node, sink_node)) {
-          os << *node << " -> " << sink_node << ';' << '\n';
-        }
-      }
-    }
-    if (hasEdge(source_node, sink_node)) {
-      os << source_node << " -> " << sink_node << ';' << '\n';
-    }
-    if (hasEdge(sink_node, source_node)) {
-      os << sink_node << " -> " << source_node << ';' << '\n';
+
+    // errs() << "cutset:" << "\n";
+    // for (auto cut : cutset) {
+    //   errs() << cut.first << " -> " << cut.second << "\n";
+    // }
+    // errs() << "\n";
+
+    return cutset;
+  }
+
+  friend raw_ostream& operator<<(raw_ostream& os, BladeGraph &graph) {
+    os << "digraph " << " {" << "\n";
+
+    boost::graph_traits<Graph>::edge_iterator edge, end;
+    for (std::tie(edge, end) = boost::edges(graph.graph); edge != end; edge++) {
+      os << '"' << graph.graph[boost::source(*edge, graph.graph)] << '"'
+        << " -> "
+        << '"' << graph.graph[boost::target(*edge, graph.graph)] << '"'
+        << ";\n";
     }
 
-    os << "node[shape=none, width=0, height=0, label=\"\"];\n";
-
-    int ii = 0;
-    os << "{" << "rank=same; " << ii << " -> " << source_node << "[style=invis]" << "}\n";
-    ii++;
-    for (Instruction* inst : index_to_instruction) {
-      ValueDefNode defNode = ValueDefNode(inst);
-      InstSinkNode sinkNode = InstSinkNode(inst);
-      os << "{" << "rank=same; " << ii << " -> " << defNode << " -> " << sinkNode << "[style=invis]" << "}\n";
-      ii++;
-    }
-    os << "{" << "rank=same; " << ii << " -> " << sink_node << "[style=invis];" << "}\n";
-    ii++;
-    for (ii = 0; ii < index_to_instruction.size() + 1; ii++) {
-      os << ii << " -> " << ii + 1 << "[style=invis];";
-    }
-
-    os << '}';
-
+    os << "}";
     return os;
   }
 };
@@ -846,17 +382,9 @@ struct BladeGraphInsertVisitor : public InstVisitor<BladeGraphInsertVisitor> {
 BladeGraph* buildBladeGraph(Function &F) {
   BladeGraph* graph = new BladeGraph(F);
 
-  // auto t1 = std::chrono::high_resolution_clock::now();
   BladeGraphInsertVisitor insertVisitor = BladeGraphInsertVisitor(*graph);
   insertVisitor.visit(F);
-  // auto t2 = std::chrono::high_resolution_clock::now();
-  // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-  // if (duration > 1000) {
-  //   errs() << F.getName() << "building graph: " << duration << "\n";
-  // }
 
-
-  // t1 = std::chrono::high_resolution_clock::now();
   // add def-use edges
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
@@ -867,14 +395,10 @@ BladeGraph* buildBladeGraph(Function &F) {
       }
     }
   }
-  // t2 = std::chrono::high_resolution_clock::now();
-  // duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-  // if (duration > 1000) {
-  //   errs() << F.getName() << "adding edges: " << duration << "\n";
-  // }
 
   return graph;
 }
+
 CallInst* getFenceCall(Function &F) {
   Function* fence_fn = Intrinsic::getDeclaration(F.getParent(), Intrinsic::x86_sse2_lfence);
   return CallInst::Create(fence_fn);
@@ -891,19 +415,17 @@ void insertFenceBefore(Function &F, Instruction* inst) {
 }
 
 
-bool insertFences(Function &F, SmallVector<std::pair<BladeNode*, BladeNode*>> &cutset) {
+bool insertFences(Function &F, SmallVector<std::pair<BladeNode, BladeNode>> &cutset) {
   for (auto &edge : cutset) {
     auto &src = edge.first;
     auto &end = edge.second;
 
-    if (isa<SourceNode>(src)) {
-      Instruction* inst = cast<ValueDefNode>(end)->inst;
-      insertFenceAfter(F, inst);
-    } else if (isa<SinkNode>(end)) {
-      Instruction* inst = cast<InstSinkNode>(src)->inst;
-      insertFenceBefore(F, inst);
+    if (src.node_type == SOURCENODE) {
+      insertFenceAfter(F, end.inst);
+    } else if (end.node_type == SINKNODE) {
+      insertFenceBefore(F, src.inst);
     } else {
-      Instruction* inst = cast<InstructionNode>(end)->inst;
+      Instruction* inst = end.inst;
       // find the end of a sequence of phi nodes. I believe this is valid
       if (isa<PHINode>(inst)) {
         while (isa<PHINode>(inst)) {
@@ -920,10 +442,10 @@ bool insertFences(Function &F, SmallVector<std::pair<BladeNode*, BladeNode*>> &c
   return true;
 }
 
-/// @brief Inserts protections right after leaky instructions given by cutset to defend
-/// against speculative leaks.
-/// @param prot see enum ProtectType
-bool insertProtections(Function &F, SmallVector<std::pair<BladeNode*, BladeNode*>> &cutset, ProtectType prot) {
+// @brief Inserts protections right after leaky instructions given by cutset to defend
+// against speculative leaks.
+// @param prot see enum ProtectType
+bool insertProtections(Function &F, SmallVector<std::pair<BladeNode, BladeNode>> &cutset, ProtectType prot) {
   switch (prot) {
   case FENCE: return insertFences(F, cutset);
   }
@@ -940,21 +462,9 @@ void runBlade(Function &F) {
   BladeGraph* graph = buildBladeGraph(F);
   // D(F << "\n\n");
   // D(*graph << "\n\n");
-  auto t1 = std::chrono::high_resolution_clock::now();
   auto cutset = graph->minCut();
-  auto t2 = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-  if (duration > 1000) {
-    errs() << F.getName() << " min cut: " << duration << "\n";
-  }
 
-  // t1 = std::chrono::high_resolution_clock::now();
   insertProtections(F, cutset, FENCE);
-  // t2 = std::chrono::high_resolution_clock::now();
-  // duration = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-  // if (duration > 1000) {
-  //   errs() << F.getName() << "protections: " << duration << "\n";
-  // }
 
   delete graph;
 }
