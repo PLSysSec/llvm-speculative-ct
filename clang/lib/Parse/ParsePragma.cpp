@@ -361,8 +361,14 @@ private:
   Sema &Actions;
 };
 
-struct PragmaRobustifyHandler : public PragmaHandler {
-  PragmaRobustifyHandler() : PragmaHandler("robust") {}
+struct PragmaRobustifySecretHandler : public PragmaHandler {
+  PragmaRobustifySecretHandler() : PragmaHandler("secret") {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
+};
+
+struct PragmaRobustifyDeclassifyHandler : public PragmaHandler {
+  PragmaRobustifyDeclassifyHandler() : PragmaHandler("declassify") {}
   void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
                Token &FirstToken) override;
 };
@@ -519,8 +525,11 @@ void Parser::initializePragmaHandlers() {
     PP.AddPragmaHandler("clang", RISCVPragmaHandler.get());
   }
 
-  RobustifyHandler = std::make_unique<PragmaRobustifyHandler>();
-  PP.AddPragmaHandler("robust", RobustifyHandler.get());
+  RobustifySecretHandler = std::make_unique<PragmaRobustifySecretHandler>();
+  PP.AddPragmaHandler("robust", RobustifySecretHandler.get());
+
+  RobustifyDeclassifyHandler = std::make_unique<PragmaRobustifyDeclassifyHandler>();
+  PP.AddPragmaHandler("robust", RobustifyDeclassifyHandler.get());
 }
 
 void Parser::resetPragmaHandlers() {
@@ -653,8 +662,11 @@ void Parser::resetPragmaHandlers() {
     RISCVPragmaHandler.reset();
   }
 
-  PP.RemovePragmaHandler("robust", RobustifyHandler.get());
-  RobustifyHandler.reset();
+  PP.RemovePragmaHandler("robust", RobustifySecretHandler.get());
+  RobustifySecretHandler.reset();
+
+  PP.RemovePragmaHandler("robust", RobustifyDeclassifyHandler.get());
+  RobustifyDeclassifyHandler.reset();
 }
 
 /// Handle the annotation token produced for #pragma unused(...)
@@ -4048,25 +4060,13 @@ void PragmaRISCVHandler::HandlePragma(Preprocessor &PP,
   Actions.DeclareRISCVVBuiltins = true;
 }
 
-static char const RobustifyCryptoSecretFuncName[] = "__robust_crypto_secret";
-static char const RobustifyCryptoDeclassifyFuncName[] =
-    "__robust_crypto_declassify";
-
 static void PushRobustifyCryptoDecl(Preprocessor &PP,
                                  SmallVectorImpl<Token> &TokenList,
-                                 StringRef FuncName) {
+                                 const char* FuncName) {
   Token FuncNameTok;
   FuncNameTok.startToken();
   FuncNameTok.setKind(tok::identifier);
-  if (FuncName == "secret") {
-    FuncNameTok.setIdentifierInfo(
-        PP.getIdentifierInfo(RobustifyCryptoSecretFuncName));
-  } else if (FuncName == "declassify") {
-    FuncNameTok.setIdentifierInfo(
-        PP.getIdentifierInfo(RobustifyCryptoDeclassifyFuncName));
-  } else {
-    return;
-  }
+  FuncNameTok.setIdentifierInfo(PP.getIdentifierInfo(FuncName));
 
   Token ExternTok;
   ExternTok.startToken();
@@ -4121,35 +4121,18 @@ static void PushRobustifyCryptoDecl(Preprocessor &PP,
   TokenList.push_back(SemiTok);
 }
 
-void PragmaRobustifyHandler::HandlePragma(Preprocessor &PP,
-                                          PragmaIntroducer Introducer,
-                                          Token &FirstToken) {
+static char const RobustifyCryptoSecretFuncName[] = "__robust_crypto_secret";
+static char const RobustifyCryptoDeclassifyFuncName[] =
+  "__robust_crypto_declassify";
+
+void PragmaRobustifySecretHandler::HandlePragma(Preprocessor &PP,
+                                                PragmaIntroducer Introducer,
+                                                Token &FirstToken) {
   SmallVector<Token, 32> TokenList;
   Token Tok;
 
   PP.Lex(Tok);
-  if (Tok.isNot(tok::identifier)) {
-    llvm::dbgs()
-        << "Error, not an identifier token for the option of pragma robust\n";
-    return;
-  }
-
-  Token Option = Tok;
-  IdentifierInfo *OptionInfo = Option.getIdentifierInfo();
-  bool OptionValid = llvm::StringSwitch<bool>(OptionInfo->getName())
-                         .Case("secret", true)
-                         .Case("declassify", true)
-                         .Default(false);
-  if (!OptionValid) {
-    llvm::errs() << "Wrong Option, only `secret` and `declassify` allowed\n";
-    PP.Diag(Tok.getLocation(), diag::err_expected_either)
-        << "secret(VAR) or declassify(VAR)";
-    return;
-  }
-  // llvm::errs() << "The option name is " << OptionInfo->getName() << "\n";
-
-  PP.Lex(Tok);
-  PushRobustifyCryptoDecl(PP, TokenList, OptionInfo->getName());
+  PushRobustifyCryptoDecl(PP, TokenList, RobustifyCryptoSecretFuncName);
 
   if (Tok.isNot(tok::l_paren)) {
     PP.Diag(Tok.getLocation(), diag::err_function_is_not_record)
@@ -4160,13 +4143,72 @@ void PragmaRobustifyHandler::HandlePragma(Preprocessor &PP,
   Token FuncNameTok;
   FuncNameTok.startToken();
   FuncNameTok.setKind(tok::identifier);
-  if (OptionInfo->getName() == "secret") {
-    FuncNameTok.setIdentifierInfo(
-        PP.getIdentifierInfo(RobustifyCryptoSecretFuncName));
-  } else {
-    FuncNameTok.setIdentifierInfo(
-        PP.getIdentifierInfo(RobustifyCryptoDeclassifyFuncName));
+  FuncNameTok.setIdentifierInfo(PP.getIdentifierInfo(RobustifyCryptoSecretFuncName));
+
+  Token LParTok;
+  LParTok.startToken();
+  LParTok.setKind(tok::l_paren);
+
+  Token CommaTok;
+  CommaTok.startToken();
+  CommaTok.setKind(tok::comma);
+
+  Token RParTok;
+  RParTok.startToken();
+  RParTok.setKind(tok::r_paren);
+
+  Token SemiTok;
+  SemiTok.startToken();
+  SemiTok.setKind(tok::semi);
+
+  Token FmtTok;
+  FmtTok.startToken();
+  FmtTok.setKind(tok::string_literal);
+  auto sdirective = std::string("\"ROBUST_CRYPTO\"");
+  FmtTok.setLiteralData(strdup(sdirective.c_str()));
+  FmtTok.setLength(sdirective.size());
+
+  TokenList.push_back(FuncNameTok);
+  TokenList.push_back(LParTok);
+  TokenList.push_back(FmtTok);
+  TokenList.push_back(CommaTok);
+
+  PP.Lex(Tok);
+  while (Tok.isNot(tok::eod)) {
+    TokenList.push_back(Tok);
+    PP.Lex(Tok);
   }
+
+  TokenList.push_back(SemiTok);
+
+  // Lazily fix location
+  for (Token &Tok : TokenList)
+    Tok.setLocation(FirstToken.getLocation());
+
+  auto TokenArray = std::make_unique<Token[]>(TokenList.size());
+  std::copy(TokenList.begin(), TokenList.end(), TokenArray.get());
+  PP.EnterTokenStream(std::move(TokenArray), TokenList.size(), false, false);
+}
+
+void PragmaRobustifyDeclassifyHandler::HandlePragma(Preprocessor &PP,
+                                             PragmaIntroducer Introducer,
+                                             Token &FirstToken) {
+  SmallVector<Token, 32> TokenList;
+  Token Tok;
+
+  PP.Lex(Tok);
+  PushRobustifyCryptoDecl(PP, TokenList, RobustifyCryptoDeclassifyFuncName);
+
+  if (Tok.isNot(tok::l_paren)) {
+    PP.Diag(Tok.getLocation(), diag::err_function_is_not_record)
+        << PP.getSpelling(Tok);
+    return;
+  }
+
+  Token FuncNameTok;
+  FuncNameTok.startToken();
+  FuncNameTok.setKind(tok::identifier);
+  FuncNameTok.setIdentifierInfo(PP.getIdentifierInfo(RobustifyCryptoDeclassifyFuncName));
 
   Token LParTok;
   LParTok.startToken();

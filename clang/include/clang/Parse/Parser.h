@@ -219,7 +219,8 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> MaxTokensHerePragmaHandler;
   std::unique_ptr<PragmaHandler> MaxTokensTotalPragmaHandler;
   std::unique_ptr<PragmaHandler> RISCVPragmaHandler;
-  std::unique_ptr<PragmaHandler> RobustifyHandler;
+  std::unique_ptr<PragmaHandler> RobustifySecretHandler;
+  std::unique_ptr<PragmaHandler> RobustifyDeclassifyHandler;
 
   std::unique_ptr<CommentHandler> CommentSemaHandler;
 
