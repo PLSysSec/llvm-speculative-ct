@@ -127,6 +127,10 @@ public:
       while (std::getline(iss, word, ' ')) {
         apiInfo.push_back(word);
       }
+
+      if (apiInfo.empty()) {
+        continue;
+      }
       // dbgs() << "Printing the vector\n" ;
       // for (auto str: apiInfo) {
       //     dbgs() << str << "\n";

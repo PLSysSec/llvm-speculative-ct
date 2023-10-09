@@ -57,11 +57,10 @@ void splitConstExpr(Module &M) {
 // SCC utilities
 
 void getSCCTraversalOrder(
-        Function &currF,
+        Function &F,
         std::vector<std::vector<BasicBlock*> > &bbTraversalList) {
-
-    Function *F = &currF;
-    for (auto I = scc_begin(F), IE = scc_end(F); I != IE; ++I) {
+    if (F.empty()) return;
+    for (auto I = scc_begin(&F), IE = scc_end(&F); I != IE; ++I) {
         const std::vector<BasicBlock*> &constvec = *I;
         std::vector<BasicBlock*> currSCC(constvec.rbegin(), constvec.rend());
         bbTraversalList.push_back(std::move(currSCC));
