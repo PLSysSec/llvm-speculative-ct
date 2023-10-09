@@ -169,7 +169,7 @@ void AliasAnalysisVisitor::visitMemTransferInst(MemTransferInst &I) {
     }
     // transfer collected fields
     if (tmp.size()) {
-        errs() << I << "\n";
+        // errs() << I << "\n";
         for (auto &pt: dstreg->pointsto) {
             for (auto &fp: tmp) {
                 auto offset = pt.dstoff + fp.first;

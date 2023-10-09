@@ -19,7 +19,7 @@ void ModifyCallbackVisitor::visitAllocaInst(AllocaInst &I) {
 
     auto reg = currCtx->getDestReg(&I);
     if (checkPointsToTaint(reg) && (I.getParent() == &(currCtx->func->getEntryBlock()))) {
-        dbgs() << "MODIFY: tainting this instruction " << I << " \n";
+        // dbgs() << "MODIFY: tainting this instruction " << I << " \n";
         funcmod()->setTaint(inst);
     }
     // sanity check
@@ -132,7 +132,7 @@ bool ModifyCallbackVisitor::visitCallInst(CallInst &I, Function *func) {
     if (currCtx->checkRecursive(I)) {
         auto inst =
             funcmod()->getInstMod(I, InstModType::MPKWrap, currCtx->lastloopiter, currCtx->loopidx);
-        dbgs() << "RECURSIVE: setting funcmod to be tainted.... not sure why :/ \n";
+        // dbgs() << "RECURSIVE: setting funcmod to be tainted.... not sure why :/ \n";
         funcmod()->setTaint(inst);
         return false;
     }
@@ -335,7 +335,7 @@ struct FunctionModifyRunner {
 #endif
 #else
 #ifndef MEMMANAGER_OFF
-                DEBUG_MODIFY(dbgs() << "testtest\n");
+                // DEBUG_MODIFY(dbgs() << "testtest\n");
                 auto newinst = funcmod->resolve_inst(instmod->inst);
                 auto allocainst = dyn_cast<AllocaInst>(newinst);
                 for (auto returninst : funcmod->returnlist) {
@@ -481,30 +481,30 @@ void ModifyCallbackVisitor::prestat() {
                 if (dyn_cast<LoadInst>(&I) || dyn_cast<StoreInst>(&I) ||
                     dyn_cast<MemTransferInst>(&I))
                     cnt_memop++;
-                dbgs() << I.getFunction()->getName() << " ";
-                dbgs() << I << "\n";
+                // dbgs() << I.getFunction()->getName() << " ";
+                // dbgs() << I << "\n";
             }
         }
     }
-    dbgs() << "\n** Number of all memop insts: " << cnt_memop << "\n";
+    // dbgs() << "\n** Number of all memop insts: " << cnt_memop << "\n";
 }
 
 void ModifyCallbackVisitor::poststat() {
     std::map<Function *, int> cntmap;
     std::map<Function *, int> cntmap2;
 
-    dbgs() << "\n\n\n** Traversed functions\n";
-    for (auto func : analyzed_functions) {
-        dbgs() << func->getName() << "\n";
-    }
+    // dbgs() << "\n\n\n** Traversed functions\n";
+    // for (auto func : analyzed_functions) {
+    //     dbgs() << func->getName() << "\n";
+    // }
 
-    dbgs() << "\n** All replicated functions\n";
+    // dbgs() << "\n** All replicated functions\n";
     for (auto &pair : newfunctions.map) {
         auto func = pair.first.first;
         auto hash = pair.first.second;
         auto &funcmod = pair.second;
         if (!funcmod.isentry && !funcmod.isExportFn) {
-            dbgs() << "New: " << funcmod.newfunc->getName() << " hash: " << hash << "\n";
+            // dbgs() << "New: " << funcmod.newfunc->getName() << " hash: " << hash << "\n";
             if (cntmap.find(func) == cntmap.end())
                 cntmap[func] = 1;
             else
@@ -526,18 +526,18 @@ void ModifyCallbackVisitor::poststat() {
         }
     }
 
-    dbgs() << "\n** Number of replica for each function\n";
-    for (auto &pair : cntmap) {
-        auto func = pair.first;
-        auto cnt = pair.second;
-        dbgs() << func->getName() << " " << cnt << "\n";
-    }
+    // dbgs() << "\n** Number of replica for each function\n";
+    // for (auto &pair : cntmap) {
+    //     auto func = pair.first;
+    //     auto cnt = pair.second;
+    //     dbgs() << func->getName() << " " << cnt << "\n";
+    // }
 
-    dbgs() << "\n** Functions replicated for MPKWrap MemFunc\n";
+    // dbgs() << "\n** Functions replicated for MPKWrap MemFunc\n";
     for (auto &pair : cntmap2) {
         auto func = pair.first;
         auto cnt = pair.second;
-        dbgs() << func->getName() << " " << cnt;
+        // dbgs() << func->getName() << " " << cnt;
         for (auto &pair : newfunctions.map) {
             auto func_iter = pair.first.first;
             auto &funcmod = pair.second;
@@ -547,20 +547,20 @@ void ModifyCallbackVisitor::poststat() {
                 if (!instmod->tainted) continue;
                 if (instmod->type == InstModType::MPKWrap ||
                     instmod->type == InstModType::MemFunc) {
-                    dbgs() << " " << funcmod.newfunc->getName();
+                    // dbgs() << " " << funcmod.newfunc->getName();
                     break;
                 }
             }
         }
-        dbgs() << "\n";
+        // dbgs() << "\n";
     }
 
     int cnt_sens_memop = FunctionModifyRunner::stats_tainted_insts.size();
-    dbgs() << "\n** Number of all wrapped memop insts: " << cnt_sens_memop << "\n";
-    for (auto inst : FunctionModifyRunner::stats_tainted_insts) {
-        dbgs() << inst->getFunction()->getName() << " ";
-        dbgs() << *inst << "\n";
-    }
+    // dbgs() << "\n** Number of all wrapped memop insts: " << cnt_sens_memop << "\n";
+    // for (auto inst : FunctionModifyRunner::stats_tainted_insts) {
+    //     dbgs() << inst->getFunction()->getName() << " ";
+    //     dbgs() << *inst << "\n";
+    // }
 }
 
 void ModifyCallbackVisitor::run_modify() {

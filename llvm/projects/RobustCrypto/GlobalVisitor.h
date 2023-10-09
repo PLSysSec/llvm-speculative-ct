@@ -138,8 +138,8 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
 
     /// called if Instruction is not handled
     void visitInstruction(Instruction &I) {
-        errs() << I << "\n";
-        // assert(false);
+        errs() << "instruction not handled: " << I << "\n";
+        assert(false);
     }
 
 
@@ -156,7 +156,7 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
     void visitCallInst(CallInst &I) {
         Function *currFunc = I.getCalledFunction();
         if(currCtx->inside_loop && !(currFunc && currFunc->isDeclaration())) {
-            errs() << "Function inside loop, will be analyzed at last iteration\n";
+            // errs() << "Function inside loop, will be analyzed at last iteration\n";
             return;
         }
 

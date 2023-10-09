@@ -232,7 +232,7 @@ void InitializerWalker::handleNonAgg(Constant* init, size_t srcoff) {
         }
     }
     // then ???
-    errs() << *cexpr << "\n";
+    // errs() << *cexpr << "\n";
     assert(false);
 }
 

@@ -110,7 +110,7 @@ void TaintAnalysisVisitor::visitMemTransferInst(MemTransferInst &I) {
     }
     // transfer collected fields
     if (tmp.size()) {
-        errs() << I << "\n";
+        // errs() << I << "\n";
         for (auto &pt : dstreg->pointsto) {
             for (auto &fp : tmp) {
                 auto offset = pt.dstoff + fp.first;
@@ -203,7 +203,7 @@ bool TaintAnalysisVisitor::visitCallInst(CallInst &I, Function *targetFunction) 
                     pt.target->updateTaintByField(pt.dstoff, field);
                 }
             } else {
-                dbgs() << "SECRET: Didn't find OpReg for the instruction: " << I << "\n";
+                // dbgs() << "SECRET: Didn't find OpReg for the instruction: " << I << "\n";
             }
         }
         else if (targetFunction->getName().equals("__robust_crypto_declassify")) {
@@ -216,7 +216,7 @@ bool TaintAnalysisVisitor::visitCallInst(CallInst &I, Function *targetFunction) 
                     pt.target->updateTaintByField(pt.dstoff, field);
                 }
             } else {
-                dbgs() << "DECLASSIFY: Didn't find OpReg for the instruction: " << I << "\n";
+                // dbgs() << "DECLASSIFY: Didn't find OpReg for the instruction: " << I << "\n";
             }
 
         }
@@ -255,6 +255,6 @@ void TaintAnalysisVisitor::stitchChildContext(CallInst &I, AliasTaintContext *ch
     //     //     dbgs() << "Tainted: " << *(memobj->represented) << "\t" << *(memobj->tainter) << "\n";
     //     // }
     // }
-    dbgs() << "RegObjects: " << childContext->localobjects.memmap.size() << "\n";
-    dbgs() << "AliasObjects: " << childContext->localobjects.regmap.size() << "\n";
+    // dbgs() << "RegObjects: " << childContext->localobjects.memmap.size() << "\n";
+    // dbgs() << "AliasObjects: " << childContext->localobjects.regmap.size() << "\n";
 }

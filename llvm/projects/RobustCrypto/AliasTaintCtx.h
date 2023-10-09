@@ -59,7 +59,7 @@ struct FieldObject {
         assert(src->declassify != src->taintflag);
 
         if (declassify && src->taintflag) {
-            dbgs() << "FLOWTAINT: Not flowing taint to declassified value " << *inst << "\n";
+            // dbgs() << "FLOWTAINT: Not flowing taint to declassified value " << *inst << "\n";
             return;
         }
 
@@ -88,7 +88,7 @@ struct FieldObject {
 
     // Make sure that a fieldobject is not secret and declassify
     void setTaint(Instruction *inst) {
-        dbgs() << "SECRET: marking tainted " << *inst << "\n";
+        // dbgs() << "SECRET: marking tainted " << *inst << "\n";
         taintflag = 1;
         tainter = inst;
 
@@ -100,7 +100,7 @@ struct FieldObject {
 
     // Make sure that a fieldobject is not secret and declassify
     void setDeclassify(Instruction *inst) {
-        dbgs() << "DECLASSIFY: marking public " << *inst << "\n";
+        // dbgs() << "DECLASSIFY: marking public " << *inst << "\n";
         declassify = 1;
         declassifier = inst;
 
