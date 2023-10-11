@@ -76,6 +76,8 @@ class GlobalVisitor: public InstVisitor<GlobalVisitor<CtxClass> > {
     void analyze(Function &func) {
         // DEBUG_CTXTIME(dbgs() << "Enter Function: " << func.getName() << "\n");
 
+      if (func.isDeclaration()) return;
+
         int scc_cnt = 0;
         std::vector<std::vector<BasicBlock*> > traversalOrder;
         getSCCTraversalOrder(func, traversalOrder);

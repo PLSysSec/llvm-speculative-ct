@@ -59,7 +59,7 @@ void splitConstExpr(Module &M) {
 void getSCCTraversalOrder(
         Function &F,
         std::vector<std::vector<BasicBlock*> > &bbTraversalList) {
-    if (F.empty()) return;
+    if (F.isDeclaration()) return;
     for (auto I = scc_begin(&F), IE = scc_end(&F); I != IE; ++I) {
         const std::vector<BasicBlock*> &constvec = *I;
         std::vector<BasicBlock*> currSCC(constvec.rbegin(), constvec.rend());
