@@ -243,6 +243,14 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     asminst = InlineAsm::get(asmtype, "sub $$128, $0\0A", "=r,0,~{dirflag},~{fpsr},~{flags}", true);
     page = builder.CreateCall(asminst, SmallVector<Value*, 1>{page});
 
+    // WIP on copying args
+    auto args_end = func.arg_end();
+    auto arg = func.arg_begin();
+    for (int arg_num = 0; arg != args_end; arg++, arg_num++) {
+      auto arg_pointer = builder.CreateGEP(int64ty, page, ConstantInt::get(int32ty, arg_num));
+      builder.CreateStore(arg, arg_pointer);
+    }
+
     // set the rsp to the addr in our page(s)
     asmtype = FunctionType::get(voidty, {int8ptrty}, false);
     asminst = InlineAsm::get(asmtype, "movq $0, %rsp\0A", "r,~{dirflag},~{fpsr},~{flags}", true);
