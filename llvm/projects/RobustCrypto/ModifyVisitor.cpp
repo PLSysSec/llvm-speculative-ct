@@ -251,7 +251,10 @@ struct FunctionModifyRunner {
     SmallVector<CallInst*> pragmaCalls;
     foreach_tainted_instmod([&](InstMod *instmod) {
       if (CallInst* callinst = dyn_cast<CallInst>(instmod->inst)) {
-        pragmaCalls.push_back(callinst);
+        Function *calledfunc = callinst->getCalledFunction();
+        if (calledfunc->getName().equals("__robust_crypto_secret") || calledfunc->getName().equals("__robust_crypto_declassify")) {
+          pragmaCalls.push_back(callinst);
+        }
       }
     });
     for (auto inst : pragmaCalls) {

@@ -123,6 +123,7 @@ public:
     visitor.addCallback<TaintAnalysisVisitor>();
     visitor.analyze();
     visitor.clearCallbacks();
+
     // DEBUG_PASSENTRY(dbgs() << "ModifyVisitor analyze\n");
     auto modifyvisitor = visitor.addCallback<ModifyCallbackVisitor>();
     visitor.analyze();
