@@ -16,6 +16,7 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Pass.h"
+#include <llvm/IR/Metadata.h>
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -185,6 +186,7 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     auto cloned = CloneFunction(&func, VMap);
     auto cloned_name = func.getName().str() + "_robust_crypto_cloned";
     cloned->setName(cloned_name);
+    cloned->addFnAttr(Attribute::NoInline);
     // cloned->print(errs(), nullptr);
 
     // Replace all the internal uses of this API call with the cloned function
@@ -238,18 +240,18 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     auto movcall = builder.CreateCall(asminst, SmallVector<Value*, 1>{page});
     movcall->addParamAttr(0, Attribute::get(ctx, Attribute::ElementType, int8ptrty));
 
-    // subtract 128 to give some space args on stack
+    // subtract 256 to give some space args on stack
     asmtype = FunctionType::get(int8ptrty, {int8ptrty}, false);
-    asminst = InlineAsm::get(asmtype, "sub $$128, $0\0A", "=r,0,~{dirflag},~{fpsr},~{flags}", true);
+    asminst = InlineAsm::get(asmtype, "sub $$256, $0\0A", "=r,0,~{dirflag},~{fpsr},~{flags}", true);
     page = builder.CreateCall(asminst, SmallVector<Value*, 1>{page});
 
-    // WIP on copying args
-    auto args_end = func.arg_end();
-    auto arg = func.arg_begin();
-    for (int arg_num = 0; arg != args_end; arg++, arg_num++) {
-      auto arg_pointer = builder.CreateGEP(int64ty, page, ConstantInt::get(int32ty, arg_num));
-      builder.CreateStore(arg, arg_pointer);
-    }
+    // copying some stack mem from caller's stack to callee's stack
+    Function *rsp_fun = Intrinsic::getDeclaration(&m, Intrinsic::read_register, builder.getIntPtrTy(m.getDataLayout()));
+    auto metadata = llvm::MDNode::get(ctx, llvm::MDString::get(ctx, "rsp"));
+    Value *rsp_args[] = {MetadataAsValue::get(ctx, metadata)};
+    auto stack_addr_int = builder.CreateCall(rsp_fun, rsp_args);
+    auto final_stack_addr = builder.CreateIntToPtr(stack_addr_int, int8ptrty);
+    builder.CreateMemCpy(page, {}, final_stack_addr, {}, 248, true);
 
     // set the rsp to the addr in our page(s)
     asmtype = FunctionType::get(voidty, {int8ptrty}, false);
@@ -321,7 +323,7 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
 
     // unwind the stack stuff
     asmtype = FunctionType::get(int8ptrty, {int8ptrty}, false);
-    asminst = InlineAsm::get(asmtype, "add $$128, $0\0A", "=r,0,~{dirflag},~{fpsr},~{flags}", true);
+    asminst = InlineAsm::get(asmtype, "add $$256, $0\0A", "=r,0,~{dirflag},~{fpsr},~{flags}", true);
     page = builder.CreateCall(asminst, SmallVector<Value*, 1>{page});
 
     //
