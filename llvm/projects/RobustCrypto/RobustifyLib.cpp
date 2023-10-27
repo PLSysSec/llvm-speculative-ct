@@ -138,7 +138,15 @@ public:
       // }
       // dbgs() << "Done printing the vector\n";
 
-      DirFuncs[m.getFunction(apiInfo[0])] =  apiInfo;
+      /*
+       * note to future users, declassify specifications take the following forms
+       * - arg_index COPY_TYPE 0 constant_width
+       * - arg_index COPY_TYPE 1 len_arg_index sizeof_underlying_arg_type
+       *
+       * COPY_TYPE ::= 0 (copy in, copy out)
+       *            |  1 (copy out)
+       */
+      DirFuncs[m.getFunction(apiInfo[0])] = apiInfo;
     }
     ifile.close();
   }
@@ -162,7 +170,7 @@ public:
 void RobustifyLibrary::lib_fn_wrapper(Module &m) {
   auto &ctx = m.getContext();
   auto voidty = Type::getVoidTy(ctx); auto int8ptrty = Type::getInt8PtrTy(ctx);
-  auto int64ty = Type::getInt64Ty(ctx); // auto boolty = Type::getInt1Ty(ctx);
+  auto int64ty = Type::getInt64Ty(ctx); auto int32ty = Type::getInt32Ty(ctx);
 
   // LLVMContext context;
   SMDiagnostic Err;
@@ -192,18 +200,43 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     // Replace all the internal uses of this API call with the cloned function
     func.replaceAllUsesWith(cloned);
 
+    bool has_declassify_arg = DirFuncs[&func].size() > 1;
+    bool declassify_copy_in = false;
+    bool declassify_copy_out = false;
+    bool declassify_const_size;
+
+    if (has_declassify_arg) {
+      auto copy_type = stoi(DirFuncs[&func][2]);
+      switch (copy_type) {
+      case 0:
+        declassify_copy_in = true;
+        declassify_copy_out = true;
+        break;
+      case 1:
+        declassify_copy_out = true;
+        break;
+      }
+
+      auto width_type = stoi(DirFuncs[&func][3]);
+      switch (width_type) {
+      case 0:
+        declassify_const_size = true;
+        break;
+      case 1:
+        declassify_const_size = false;
+        break;
+      }
+    }
+
     // Get the entry point to add instructions
     auto eBB = &func.getEntryBlock();
 
     auto entryBB = BasicBlock::Create(ctx, "entryBB", &func, eBB);
-    IRBuilder<> IRBentryBB(entryBB);
     IRBuilder<> builder(entryBB);
-
 
     int pkey = 1;
     int allow = 0;
     int disallow = 3;
-    Type *int32ty = Type::getInt32Ty(ctx);
     Value *zero = ConstantInt::get(int32ty, 0);
     Value *perm = ConstantInt::get(int32ty, allow << (2 * pkey));
 
@@ -212,11 +245,62 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     auto asminst = InlineAsm::get(asmtype, "wrpkru", "{ax},{cx},{dx}", true);
     builder.CreateCall(asminst, SmallVector<Value*, 3>{perm, zero, zero});
 
-
     // Copy the original arguments to cloned function arguments
     std::vector<Value*> cloned_args;
     for (auto& arg: func.args()) {
       cloned_args.push_back(&arg);
+    }
+
+    Value* declassify_arg = nullptr;
+    CallInst* declassify_arg_malloc;
+    Value* declassify_argsize = nullptr;
+
+    // Create a protected memory version for declassified value
+    // TODO: need to deal with many cases
+    if (has_declassify_arg) {
+      auto opInt = stoi(DirFuncs[&func][1]);
+      auto fn_arg = func.arg_begin();
+      fn_arg += opInt;
+      // auto target = fn_arg->getType();
+      // auto stripped = fn_arg->stripPointerCasts();
+      auto mallocfunc = m.getFunction("mpk_malloc");
+
+      // testing with static sizes
+      // TODO: BASH deal with different cases
+      // auto &dl = m.getDataLayout();
+      // store the passed client declassified arg
+      declassify_arg = cloned_args[opInt];    // declassify arg index
+
+      // deal with Arg param for malloc len
+      if (declassify_const_size) {
+        declassify_argsize = ConstantInt::get(int64ty, stoi(DirFuncs[&func][4]));
+      } else {
+        auto len_arg_index = stoi(DirFuncs[&func][4]);
+        auto len_arg_type = func.getFunctionType()->getParamType(len_arg_index);
+        auto arg_sizeof = stoi(DirFuncs[&func][5]);
+        if (isa<IntegerType>(len_arg_type)) {
+          declassify_argsize = builder.CreateMul(ConstantInt::get(len_arg_type, arg_sizeof), cloned_args[len_arg_index]);
+        } else if(isa<PointerType>(len_arg_type)) {
+          auto arg_multiplicity = builder.CreateLoad(int64ty, cloned_args[len_arg_index], "");
+          declassify_argsize = builder.CreateMul(ConstantInt::get(int64ty, arg_sizeof), arg_multiplicity);
+        } else {
+          errs() << "invalid type for declassify length argument" << "\n";
+          exit(1);
+        }
+      }
+
+      // create callinst
+      std::vector<Value*> margs;
+      margs.push_back(declassify_argsize);
+      declassify_arg_malloc = builder.CreateCall(mallocfunc->getFunctionType(), mallocfunc, margs);
+
+      if (declassify_copy_in) {
+        // copy the client mem to protected lib mem
+        builder.CreateMemCpy(declassify_arg_malloc, MaybeAlign(), declassify_arg, MaybeAlign(), declassify_argsize, false);
+      }
+
+      // replace the declassify arg with declassify_arg_malloc arg
+      cloned_args[opInt] = declassify_arg_malloc;
     }
 
     // Get a page(mmap) for the stack frame
@@ -261,65 +345,8 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     // cloned function call
     CallInst* newcall;
 
-    // Create a protected memory version for declassified value
-    // TODO: need to deal with many cases
-    if (DirFuncs[&func].size() > 1) {
-      CallInst* protected_malloc;
-
-      auto opInt = stoi(DirFuncs[&func][1]);
-      auto fn_arg = func.arg_begin();
-      fn_arg += opInt;
-      // auto target = fn_arg->getType();
-      // auto stripped = fn_arg->stripPointerCasts();
-      auto mallocfunc = m.getFunction("mpk_malloc");
-
-      // testing with static sizes
-      // TODO: BASH deal with different cases
-      // auto &dl = m.getDataLayout();
-      llvm::Value* argsize = nullptr;
-      // auto mlen = builder.CreateAlloca(int64ty);
-
-      // deal with Arg param for malloc len
-      if (stoi(DirFuncs[&func][2]) == -1) {
-        /// builder.CreateStore(cloned_args[stoi(DirFuncs[&func][3])], mlen);
-        /// auto size = builder.CreateLoad(mlen);
-        /// argsize = builder.CreateMul(ConstantInt::get(int64ty, dl.getTypeAllocSize(basetype)), size);
-        assert(false && "TODO(MATT): dynamic-sized arguments");
-      } else {
-        argsize = ConstantInt::get(int64ty, stoi(DirFuncs[&func][2]));
-      }
-
-
-      // create callinst
-      std::vector<Value*> margs;
-      margs.push_back(argsize);
-      protected_malloc = builder.CreateCall(mallocfunc->getFunctionType(), mallocfunc, margs);
-
-      // store the passed client declassified arg
-      auto declassify_arg = cloned_args[opInt];    // declassify arg index
-
-      // copy the client mem to protected lib mem
-      builder.CreateMemCpy(protected_malloc, MaybeAlign(), declassify_arg, MaybeAlign(), argsize, false);
-
-      // replace the declassify arg with protected_malloc arg
-      cloned_args[opInt] = protected_malloc;
-
-      // Call the cloned(from original) function
-      newcall = builder.CreateCall(cloned->getFunctionType(), cloned, cloned_args);
-
-      // Copy back the results
-      builder.CreateMemCpy(declassify_arg, MaybeAlign(), protected_malloc, MaybeAlign(), argsize, false);
-
-      // release the allocated memory
-      auto freefunc = m.getFunction("mpk_free");
-      std::vector<Value*> fargs;
-      fargs.push_back(protected_malloc);
-      builder.CreateCall(freefunc->getFunctionType(), freefunc, fargs);
-
-    } else {
-      // Call the cloned(from original) function
-      newcall = builder.CreateCall(cloned->getFunctionType(), cloned, cloned_args);
-    }
+    // Call the cloned(from original) function
+    newcall = builder.CreateCall(cloned->getFunctionType(), cloned, cloned_args);
 
     // unwind the stack stuff
     asmtype = FunctionType::get(int8ptrty, {int8ptrty}, false);
@@ -341,6 +368,21 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     std::vector<Value*> eargs;
     eargs.push_back(page_addr_copy);
     builder.CreateCall(endF->getFunctionType(), endF, eargs);
+
+    if (has_declassify_arg) {
+      if (declassify_copy_out) {
+        // Copy back the results
+        builder.CreateMemCpy(declassify_arg, MaybeAlign(), declassify_arg_malloc, MaybeAlign(), declassify_argsize, false);
+      }
+
+      if (!declassify_const_size) {
+        // release the allocated memory
+        auto freefunc = m.getFunction("mpk_free");
+        std::vector<Value*> fargs;
+        fargs.push_back(declassify_arg_malloc);
+        builder.CreateCall(freefunc->getFunctionType(), freefunc, fargs);
+      }
+    }
 
     // insert privilege de-escalation code
     perm = ConstantInt::get(int32ty, disallow << (2 * pkey));
