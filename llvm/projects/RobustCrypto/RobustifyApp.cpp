@@ -88,12 +88,50 @@ void initValueUid(Module &M, Globals &globals) {
   }
 }
 
+// class RobustifyApp {
+// private:
+//   std::string EntryPointName;
+//   Globals globals;
+
+// public:
+//   RobustifyApp(std::string EntryPointName)
+//     : EntryPointName(EntryPointName) {}
+
+//   ~RobustifyApp() {}
+
+//   void init(Module &m) {
+//     splitConstExpr(m);
+//     initValueUid(m, globals);
+//   }
+
+//   bool runOnModule(Module &m) {
+//     Function* func = m.getFunction(EntryPointName);
+//     if (func) {
+//       // this will trigger both points-to and taint analysis
+//       start_analyze(m, *func);
+//     }
+
+//     replaceRuntime(m);
+//     return true;
+//   }
+
+//   void start_analyze(Module &m, Function &entry) {
+//     GlobalVisitor<AliasTaintContext> visitor(m, entry, globals);
+//     visitor.addCallback<AliasAnalysisVisitor>();
+//     visitor.addCallback<TaintAnalysisVisitor>();
+//     visitor.analyze();
+//     visitor.clearCallbacks();
+
+//     // DEBUG_PASSENTRY(dbgs() << "ModifyVisitor analyze\n");
+//     auto modifyvisitor = visitor.addCallback<ModifyCallbackVisitor>();
+//     visitor.analyze();
+//     modifyvisitor->run_modify();
+//   }
+// };
+
 class RobustifyApp {
 private:
   std::string EntryPointName;
-  Globals globals;
-
-  void lib_fn_wrapper(Module &m);
 
 public:
   RobustifyApp(std::string EntryPointName)
@@ -101,33 +139,50 @@ public:
 
   ~RobustifyApp() {}
 
-  void init(Module &m) {
-    splitConstExpr(m);
-    initValueUid(m, globals);
-  }
-
   bool runOnModule(Module &m) {
     Function* func = m.getFunction(EntryPointName);
     if (func) {
-      // this will trigger both points-to and taint analysis
-      start_analyze(m, *func);
+      auto int8ptrty = Type::getInt8PtrTy(m.getContext());
+      auto voidty = Type::getVoidTy(m.getContext());
+      GlobalVariable* secure_stack_ptr = new GlobalVariable(m,
+                                                            int8ptrty,
+                                                            false,
+                                                            GlobalValue::CommonLinkage,
+                                                            ConstantPointerNull::get(int8ptrty),
+                                                            "robust_crypto_stack_pointer");
+      FunctionType* bashGetPageSig = FunctionType::get(int8ptrty, false);
+      Function::Create(bashGetPageSig, Function::ExternalLinkage, "bash_get_page", m);
+
+      FunctionType* get_robust_crypto_stack_pointer_sig = FunctionType::get(int8ptrty, false);
+      Function* get_robust_crypto_stack_pointer = Function::Create(get_robust_crypto_stack_pointer_sig, Function::ExternalLinkage, "get_robust_crypto_stack_pointer", m);
+      auto entryBB = BasicBlock::Create(m.getContext(), "entryBB", get_robust_crypto_stack_pointer, nullptr);
+
+      IRBuilder<> stack_pointer_builder(entryBB);
+      auto loaded_stack_ptr = stack_pointer_builder.CreateLoad(int8ptrty, secure_stack_ptr, "");
+      stack_pointer_builder.CreateRet(loaded_stack_ptr);
+
+      BasicBlock &eBB = func->getEntryBlock();
+      Instruction *start_point = nullptr;
+      for (Instruction &inst : eBB) {
+        if (!isa<AllocaInst>(inst)) {
+          start_point = &inst;
+          break;
+        }
+      }
+
+      IRBuilder<> builder(start_point);
+      auto get_page = m.getFunction("bash_get_page");
+      std::vector<Value*> gpargs;
+      auto page = builder.CreateCall(get_page->getFunctionType(), get_page);
+
+      // add (page_size * 2 - 8) to page addr as stack grows high to low addr
+      // currently the value is hardcoded. TODO: change later
+      auto asmtype = FunctionType::get(int8ptrty, {int8ptrty}, false);
+      auto asminst = InlineAsm::get(asmtype, "add $$8176, $0\0A", "=r,0,~{dirflag},~{fpsr},~{flags}", true);
+      page = builder.CreateCall(asminst, SmallVector<Value*, 1>{page});
+      builder.CreateStore(page, secure_stack_ptr);
     }
-
-    replaceRuntime(m);
     return true;
-  }
-
-  void start_analyze(Module &m, Function &entry) {
-    GlobalVisitor<AliasTaintContext> visitor(m, entry, globals);
-    visitor.addCallback<AliasAnalysisVisitor>();
-    visitor.addCallback<TaintAnalysisVisitor>();
-    visitor.analyze();
-    visitor.clearCallbacks();
-
-    // DEBUG_PASSENTRY(dbgs() << "ModifyVisitor analyze\n");
-    auto modifyvisitor = visitor.addCallback<ModifyCallbackVisitor>();
-    visitor.analyze();
-    modifyvisitor->run_modify();
   }
 };
 
@@ -142,7 +197,6 @@ public:
       return PreservedAnalyses::all();
 
     RobustifyApp RA(EntryPointName);
-    RA.init(M);
     return RA.runOnModule(M) ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
 };

@@ -77,7 +77,7 @@ void linkMemModule(Module &m) {
   /// }
 
   Type* unsignedIntType = Type::getInt64Ty(m.getContext());
-  Type* voidPtrType = Type::getInt8PtrTy(m.getContext());
+  PointerType* voidPtrType = Type::getInt8PtrTy(m.getContext());
   Type* voidType = Type::getVoidTy(m.getContext());
 
   // void *mpk_malloc(unsigned int);
@@ -93,6 +93,10 @@ void linkMemModule(Module &m) {
   Function::Create(mpkFreeSig, Function::ExternalLinkage, "mpk_free", m);
   Function::Create(bashGetPageSig, Function::ExternalLinkage, "bash_get_page", m);
   Function::Create(bashFreePageSig, Function::ExternalLinkage, "bash_free_page", m);
+
+  FunctionType* get_robust_crypto_stack_pointer_sig = FunctionType::get(voidPtrType, false);
+
+  Function::Create(get_robust_crypto_stack_pointer_sig, Function::ExternalLinkage, "get_robust_crypto_stack_pointer", m);
 }
 
 class RobustifyLibrary {
@@ -303,6 +307,7 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
       cloned_args[opInt] = declassify_arg_malloc;
     }
 
+    /*
     // Get a page(mmap) for the stack frame
     auto get_page = m.getFunction("bash_get_page");
     std::vector<Value*> gpargs;
@@ -317,6 +322,13 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     asmtype = FunctionType::get(int8ptrty, {int8ptrty}, false);
     asminst = InlineAsm::get(asmtype, "add $$8176, $0\0A", "=r,0,~{dirflag},~{fpsr},~{flags}", true);
     page = builder.CreateCall(asminst, SmallVector<Value*, 1>{page});
+    */
+
+    // GlobalVariable* secure_stack_ptr = m.getNamedGlobal("robust_crypto_stack_pointer");
+    // Instruction* page = builder.CreateLoad(int8ptrty, secure_stack_ptr, "");
+
+    auto get_robust_crypto_stack_pointer = m.getFunction("get_robust_crypto_stack_pointer");
+    Instruction* page = builder.CreateCall(get_robust_crypto_stack_pointer->getFunctionType(), get_robust_crypto_stack_pointer, SmallVector<Value*, 1>{});
 
     // store the current rsp
     asmtype = FunctionType::get(voidty, {int8ptrty}, false);
@@ -330,12 +342,18 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     page = builder.CreateCall(asminst, SmallVector<Value*, 1>{page});
 
     // copying some stack mem from caller's stack to callee's stack
-    Function *rsp_fun = Intrinsic::getDeclaration(&m, Intrinsic::read_register, builder.getIntPtrTy(m.getDataLayout()));
-    auto metadata = llvm::MDNode::get(ctx, llvm::MDString::get(ctx, "rsp"));
-    Value *rsp_args[] = {MetadataAsValue::get(ctx, metadata)};
-    auto stack_addr_int = builder.CreateCall(rsp_fun, rsp_args);
-    auto final_stack_addr = builder.CreateIntToPtr(stack_addr_int, int8ptrty);
-    builder.CreateMemCpy(page, {}, final_stack_addr, {}, 248, true);
+    // int num_args = 0;
+    // for (auto arg = func.arg_begin(); arg != func.arg_end(); arg++) {
+    //   num_args++;
+    // }
+    // if (num_args > 6) {
+      Function *rsp_fun = Intrinsic::getDeclaration(&m, Intrinsic::read_register, builder.getIntPtrTy(m.getDataLayout()));
+      auto metadata = llvm::MDNode::get(ctx, llvm::MDString::get(ctx, "rsp"));
+      Value *rsp_args[] = {MetadataAsValue::get(ctx, metadata)};
+      auto stack_addr_int = builder.CreateCall(rsp_fun, rsp_args);
+      auto final_stack_addr = builder.CreateIntToPtr(stack_addr_int, int8ptrty);
+      builder.CreateMemCpy(page, {}, final_stack_addr, {}, 248, true);
+    // }
 
     // set the rsp to the addr in our page(s)
     asmtype = FunctionType::get(voidty, {int8ptrty}, false);
@@ -363,11 +381,13 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     asminst = InlineAsm::get(asmtype, "popq %rsp", "~{dirflag},~{fpsr},~{flags}", true);
     builder.CreateCall(asminst, SmallVector<Value*, 1>{});
 
+    /*
     // Release the page(unmap) used for the stack frame
     auto endF = m.getFunction("bash_free_page");
     std::vector<Value*> eargs;
     eargs.push_back(page_addr_copy);
     builder.CreateCall(endF->getFunctionType(), endF, eargs);
+    */
 
     if (has_declassify_arg) {
       if (declassify_copy_out) {
