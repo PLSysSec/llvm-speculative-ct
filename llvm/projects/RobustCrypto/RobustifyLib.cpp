@@ -84,6 +84,8 @@ void linkMemModule(Module &m) {
   FunctionType* mpkMallocSig = FunctionType::get(voidPtrType, {unsignedIntType}, false);
   // void mpk_free(void *);
   FunctionType* mpkFreeSig = FunctionType::get(voidType, {voidPtrType}, false);
+  // void *mpk_realloc(void *ptr, size_t size);
+  FunctionType* mpkReallocSig = FunctionType::get(voidPtrType, {voidPtrType, unsignedIntType}, false);
   // void *bash_get_page();
   FunctionType* bashGetPageSig = FunctionType::get(voidPtrType, false);
   // void bash_free_page(void *);
@@ -91,6 +93,7 @@ void linkMemModule(Module &m) {
 
   Function::Create(mpkMallocSig, Function::ExternalLinkage, "mpk_malloc", m);
   Function::Create(mpkFreeSig, Function::ExternalLinkage, "mpk_free", m);
+  Function::Create(mpkReallocSig, Function::ExternalLinkage, "mpk_realloc", m);
   Function::Create(bashGetPageSig, Function::ExternalLinkage, "bash_get_page", m);
   Function::Create(bashFreePageSig, Function::ExternalLinkage, "bash_free_page", m);
 
@@ -182,6 +185,10 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
 
   for (Function &func: m) {
 
+    if (func.isDeclaration()) {
+      continue;
+    }
+
     // skip the non-export functions
     if (DirFuncs.find(&func) == DirFuncs.end()) {
       continue;
@@ -196,7 +203,7 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
     }
 
     auto cloned = CloneFunction(&func, VMap);
-    auto cloned_name = func.getName().str() + "_robust_crypto_cloned";
+    std::string cloned_name = func.getName().str() + "_robust_crypto_cloned";
     cloned->setName(cloned_name);
     cloned->addFnAttr(Attribute::NoInline);
     // cloned->print(errs(), nullptr);
@@ -294,9 +301,7 @@ void RobustifyLibrary::lib_fn_wrapper(Module &m) {
       }
 
       // create callinst
-      std::vector<Value*> margs;
-      margs.push_back(declassify_argsize);
-      declassify_arg_malloc = builder.CreateCall(mallocfunc->getFunctionType(), mallocfunc, margs);
+      declassify_arg_malloc = builder.CreateCall(mallocfunc->getFunctionType(), mallocfunc, SmallVector<Value*, 1>{declassify_argsize});
 
       if (declassify_copy_in) {
         // copy the client mem to protected lib mem
